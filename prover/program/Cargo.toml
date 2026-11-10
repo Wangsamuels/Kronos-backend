@@ -1,0 +1,12 @@
+[package]
+name = "kronos-attest-program"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# Built with the SP1 toolchain only: `cargo prove build` (not part of the default workspace build).
+[dependencies]
+sp1-zkvm = "5"
+kronos-attest-core = { path = "../attest-core" }
+alloy-sol-types = "1"
+alloy-primitives = "1"

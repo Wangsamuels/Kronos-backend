@@ -1,0 +1,37 @@
+{
+  "name": "kronos-backend",
+  "description": "Kronos API + analysis workers (container stack)",
+  "stack": "container",
+  "formation": {
+    "web": { "quantity": 1, "size": "standard-1x" },
+    "worker": { "quantity": 1, "size": "standard-2x" }
+  },
+  "addons": ["heroku-postgresql:essential-0", "heroku-redis:mini", "papertrail:choklad"],
+  "env": {
+    "NODE_ENV": { "value": "production" },
+    "JWT_SECRET": { "generator": "secret" },
+    "CORS_ORIGINS": { "description": "Comma-separated allowed origins, e.g. https://kronos.vercel.app,https://kronos-*.vercel.app" },
+    "FRONTEND_URL": { "description": "e.g. https://kronos.vercel.app" },
+    "PUBLIC_API_URL": { "description": "This app's public URL, e.g. https://kronos-api.herokuapp.com" },
+    "ALLOW_DEV_LOGIN": { "value": "false", "required": false },
+    "LLM_PROVIDER": { "value": "near-ai", "required": false },
+    "NEAR_AI_API_KEY": { "required": false },
+    "GITHUB_APP_ID": { "required": false },
+    "GITHUB_APP_PRIVATE_KEY": { "required": false },
+    "GITHUB_APP_SLUG": { "required": false },
+    "GITHUB_CLIENT_ID": { "required": false },
+    "GITHUB_CLIENT_SECRET": { "required": false },
+    "ETHERSCAN_API_KEY": { "required": false },
+    "RPC_AURORA_TESTNET": { "value": "https://testnet.aurora.dev", "required": false },
+    "RPC_BASE_SEPOLIA": { "value": "https://sepolia.base.org", "required": false },
+    "ATTESTOR_PRIVATE_KEY": { "required": false },
+    "MONITOR_PRIVATE_KEY": { "required": false },
+    "NEAR_ACCOUNT_ID": { "required": false },
+    "NEAR_FUNCTION_CALL_KEY": { "required": false },
+    "NEAR_REGISTRY_CONTRACT": { "value": "kronos.testnet", "required": false },
+    "R2_ENDPOINT": { "required": false },
+    "R2_ACCESS_KEY": { "required": false },
+    "R2_SECRET_KEY": { "required": false },
+    "R2_BUCKET": { "value": "kronos", "required": false }
+  }
+}

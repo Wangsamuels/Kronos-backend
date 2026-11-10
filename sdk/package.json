@@ -1,0 +1,13 @@
+{
+  "name": "@kronos/sdk",
+  "version": "0.1.0",
+  "description": "Build, sign and submit Kronos EIP-712 intents for guarded lending protocols",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "license": "MIT",
+  "scripts": { "build": "tsc -p tsconfig.json", "test": "vitest run" },
+  "peerDependencies": { "viem": "^2.20.0" }
+}

@@ -1,0 +1,19 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.24"
+evm_version = "paris"   # Aurora and other EVMs may lack Cancun opcodes; no transient storage used
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+fs_permissions = [{ access = "read-write", path = "./" }]
+
+[rpc_endpoints]
+aurora_testnet = "${RPC_AURORA_TESTNET}"
+base_sepolia = "${RPC_BASE_SEPOLIA}"
+
+[fmt]
+line_length = 110

@@ -1,0 +1,11 @@
+build:
+  docker:
+    web: Dockerfile
+    worker: Dockerfile
+release:
+  image: web
+  command:
+    - node dist/db/migrate.js
+run:
+  web: node dist/api/server.js
+  worker: node dist/worker/index.js
