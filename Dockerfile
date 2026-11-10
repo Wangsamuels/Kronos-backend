@@ -25,7 +25,7 @@ RUN npm run build && npm prune --omit=dev
 
 FROM base AS runtime
 WORKDIR /app
-ENV NODE_ENV=production WORKDIR=/tmp/kronos-work LOCAL_STORAGE_DIR=/tmp/kronos-storage
+ENV NODE_ENV=production WORKDIR=/tmp/kronos-work
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./

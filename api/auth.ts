@@ -69,14 +69,14 @@ function cookieOpts() {
     httpOnly: true,
     secure: prod || sameSite === "none",
     sameSite,
-    path: "/v1/auth",
+    path: env.COOKIE_PATH,
     domain: env.COOKIE_DOMAIN,
     maxAge: env.REFRESH_TOKEN_TTL,
   } as const;
 }
 
 /** Issues an access JWT (returned in the body, kept in memory by the frontend) + a rotating refresh cookie. */
-export async function issueSession(reply: FastifyReply, userId: string) {
+export async function issueSession(reply: FastifyReply, userId: string, isNewUser = false) {
   const raw = crypto.randomBytes(32).toString("base64url");
   await db.insert(schema.refreshTokens).values({
     userId,
@@ -84,7 +84,7 @@ export async function issueSession(reply: FastifyReply, userId: string) {
     expiresAt: new Date(Date.now() + env.REFRESH_TOKEN_TTL * 1000),
   });
   reply.setCookie(REFRESH_COOKIE, raw, cookieOpts());
-  return { accessToken: await signAccessToken(userId), expiresIn: env.ACCESS_TOKEN_TTL, userId };
+  return { accessToken: await signAccessToken(userId), expiresIn: env.ACCESS_TOKEN_TTL, userId, isNewUser };
 }
 
 export async function rotateSession(req: FastifyRequest, reply: FastifyReply) {
@@ -108,5 +108,5 @@ export async function rotateSession(req: FastifyRequest, reply: FastifyReply) {
 export async function endSession(req: FastifyRequest, reply: FastifyReply) {
   const raw = req.cookies[REFRESH_COOKIE];
   if (raw) await db.update(schema.refreshTokens).set({ revokedAt: new Date() }).where(eq(schema.refreshTokens.tokenHash, sha(raw)));
-  reply.clearCookie(REFRESH_COOKIE, { path: "/v1/auth", domain: env.COOKIE_DOMAIN });
+  reply.clearCookie(REFRESH_COOKIE, { path: env.COOKIE_PATH, domain: env.COOKIE_DOMAIN });
 }

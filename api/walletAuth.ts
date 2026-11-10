@@ -4,14 +4,29 @@ import { createPublicClient, http } from "viem";
 import { mainnet } from "viem/chains";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, lt } from "drizzle-orm";
 import { db, schema } from "../db/client.js";
 import { env } from "../lib/env.js";
 import { badRequest, unauthorized } from "../lib/errors.js";
 import { publicClient, SUPPORTED_CHAIN_IDS } from "../lib/chains.js";
 
+/** Hosts a SIWE message may name as its `domain`: the frontend and every allowed CORS origin. */
+export function siweDomains(): Set<string> {
+  const hosts = new Set<string>([new URL(env.FRONTEND_URL).host]);
+  for (const o of env.CORS_ORIGINS.split(",").map((x) => x.trim()).filter(Boolean)) {
+    try {
+      if (!o.includes("*")) hosts.add(new URL(o).host);
+    } catch {
+      /* ignore malformed origin */
+    }
+  }
+  return hosts;
+}
+
 export async function createNonce(): Promise<string> {
-  const nonce = crypto.randomBytes(16).toString("hex");
+  // housekeeping: drop nonces that expired more than a day ago
+  await db.delete(schema.authNonces).where(lt(schema.authNonces.expiresAt, new Date(Date.now() - 86_400_000)));
+  const nonce = crypto.randomBytes(32).toString("hex"); // 32 bytes: used as-is as the NEP-413 nonce
   await db.insert(schema.authNonces).values({ nonce, expiresAt: new Date(Date.now() + 10 * 60_000) });
   return nonce;
 }
@@ -29,9 +44,9 @@ async function consumeNonce(nonce: string) {
 export async function verifySiwe(message: string, signature: `0x${string}`): Promise<string> {
   const parsed = parseSiweMessage(message);
   if (!parsed.address || !parsed.nonce) throw badRequest("Malformed SIWE message");
-  const frontendHost = new URL(env.FRONTEND_URL).host;
-  if (parsed.domain && parsed.domain !== frontendHost && env.NODE_ENV === "production") {
-    throw unauthorized(`SIWE domain must be ${frontendHost}`);
+  const allowed = siweDomains();
+  if (!parsed.domain || !allowed.has(parsed.domain)) {
+    throw unauthorized(`SIWE domain must be one of: ${[...allowed].join(", ")}`);
   }
   const chainId = parsed.chainId ?? 1;
   const client = SUPPORTED_CHAIN_IDS.includes(chainId)
@@ -56,6 +71,7 @@ export async function verifyNear(input: {
   recipient: string;
   callbackUrl?: string;
 }): Promise<string> {
+  if (input.recipient !== env.NEAR_SIGNIN_RECIPIENT) throw unauthorized(`NEAR sign-in recipient must be "${env.NEAR_SIGNIN_RECIPIENT}"`);
   const nonceBytes = Buffer.alloc(32);
   Buffer.from(input.nonce, "hex").copy(nonceBytes);
   const payload = borshNep413(input.message, nonceBytes, input.recipient, input.callbackUrl);

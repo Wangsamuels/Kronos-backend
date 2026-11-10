@@ -104,6 +104,9 @@ schemas, and says plainly that GuardConfig wiring needs a manual or LLM-drafted 
 
 ## Deploying to Heroku
 
+The full runbook (Heroku resources, every config var, EVM + NEAR contract deployment, GitHub App,
+Vercel proxy) is in **[DEPLOY.md](DEPLOY.md)**. The short version:
+
 ```bash
 heroku create kronos-api --stack container
 heroku addons:create heroku-postgresql:essential-0
@@ -125,10 +128,13 @@ The worker needs ≥ 1 GB RAM for forge/anvil (Standard-2X). All settings are co
    regenerate with `npm run openapi` after API changes.
 2. Set `NEXT_PUBLIC_API_URL=https://kronos-api.herokuapp.com` on Vercel, and `CORS_ORIGINS` +
    `FRONTEND_URL` here.
-3. Auth: the access JWT comes back in the body (keep it in memory); the refresh token is an httpOnly cookie
-   on `/v1/auth` (`POST /v1/auth/refresh`). Cross-site it is `SameSite=None; Secure`; with a shared parent
-   domain set `COOKIE_SAMESITE=lax` and `COOKIE_DOMAIN`. GitHub OAuth redirects to
-   `FRONTEND_URL/auth/callback#access_token=…`.
+3. Auth: one modal for sign-in and sign-up (the first sign-in creates the account; responses carry
+   `isNewUser`). `GET /v1/auth/providers` lists the options and the exact SIWE domain / NEAR recipient to
+   sign. The access JWT comes back in the body (keep it in memory); the refresh token is an httpOnly cookie
+   (`POST /v1/auth/refresh` on app load restores the session). GitHub: navigate to
+   `/v1/auth/github?returnTo=/your/path`; it comes back to
+   `FRONTEND_URL/auth/callback#access_token=…&new_user=0|1&return_to=/your/path` (or `#error=…`).
+   Prefer proxying the API through Vercel so the cookie is first-party (see DEPLOY.md §6).
 4. SSE: `GET /v1/analyses/:id/stream?token=…` (EventSource can't send headers). Events: `stage`, `log`,
    `entrypoint`, `invariant`, `done`, `error`, each with an `id`; reconnects resume via `Last-Event-ID` or
    `?lastEventId=`. A heartbeat goes out every 15 s (Heroku drops idle connections after 55 s). After

@@ -26,10 +26,13 @@ const defaults: JobsOptions = {
 };
 
 const cache = new Map<QueueName, Queue>();
+// One connection shared by all producers (Heroku Key-Value Store Mini allows ~20 connections in total).
+let producerConn: ReturnType<typeof createRedis> | undefined;
 export function queue(name: QueueName): Queue {
   let q = cache.get(name);
   if (!q) {
-    q = new Queue(QUEUES[name], { connection: createRedis(), defaultJobOptions: defaults });
+    producerConn ??= createRedis();
+    q = new Queue(QUEUES[name], { connection: producerConn, defaultJobOptions: defaults });
     cache.set(name, q);
   }
   return q;

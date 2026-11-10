@@ -17,7 +17,19 @@ export const ProtocolStatus = z.enum(["draft", "analyzing", "review", "approved"
 export const RunStatus = z.enum(["queued", "running", "review", "approved", "packaging", "packaged", "failed"]);
 export const ReviewStatus = z.enum(["proposed", "approved", "rejected"]);
 
-export const Session = z.object({ accessToken: z.string(), expiresIn: z.number(), userId: z.string() });
+export const Session = z.object({
+  accessToken: z.string(),
+  expiresIn: z.number(),
+  userId: z.string(),
+  isNewUser: z.boolean().describe("true when this sign-in created the account (sign-up)"),
+});
+
+export const Providers = z.object({
+  github: z.object({ enabled: z.boolean(), startUrl: z.string(), appInstallUrl: z.string().nullable() }),
+  siwe: z.object({ enabled: z.boolean(), domain: z.string(), uri: z.string(), chainIds: z.array(z.number()), statement: z.string() }),
+  near: z.object({ enabled: z.boolean(), network: z.string(), recipient: z.string(), message: z.string() }),
+  dev: z.object({ enabled: z.boolean() }),
+});
 
 export const User = z.object({
   id: z.string(),

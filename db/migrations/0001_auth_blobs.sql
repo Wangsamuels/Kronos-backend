@@ -1,0 +1,7 @@
+CREATE TABLE "blobs" (
+	"key" text PRIMARY KEY NOT NULL,
+	"data" "bytea" NOT NULL,
+	"content_type" text NOT NULL,
+	"bytes" integer NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);

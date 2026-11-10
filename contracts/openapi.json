@@ -29,11 +29,148 @@
         }
       }
     },
-    "/v1/auth/github": {
+    "/v1/auth/providers": {
       "get": {
-        "summary": "Start GitHub OAuth",
+        "summary": "Sign-in options for the sign-in / sign-up modal, with the exact values wallets must sign",
         "tags": [
           "auth"
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "github": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "startUrl": {
+                          "type": "string"
+                        },
+                        "appInstallUrl": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "startUrl",
+                        "appInstallUrl"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "siwe": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "domain": {
+                          "type": "string"
+                        },
+                        "uri": {
+                          "type": "string"
+                        },
+                        "chainIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "statement": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "domain",
+                        "uri",
+                        "chainIds",
+                        "statement"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "near": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "network": {
+                          "type": "string"
+                        },
+                        "recipient": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "network",
+                        "recipient",
+                        "message"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "dev": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "github",
+                    "siwe",
+                    "near",
+                    "dev"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/github": {
+      "get": {
+        "summary": "Start GitHub sign-in / sign-up. returnTo = frontend path to land on afterwards; linkToken = add GitHub to a signed-in account",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "returnTo",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "linkToken",
+            "required": false
+          }
         ],
         "responses": {
           "200": {
@@ -93,6 +230,22 @@
             "in": "query",
             "name": "setup_action",
             "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "error",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "error_description",
+            "required": false
           }
         ],
         "responses": {
@@ -104,7 +257,7 @@
     },
     "/v1/auth/nonce": {
       "get": {
-        "summary": "Nonce for SIWE / NEAR sign-in",
+        "summary": "Single-use nonce (10 min) for SIWE / NEAR sign-in",
         "tags": [
           "auth"
         ],
@@ -133,7 +286,7 @@
     },
     "/v1/auth/wallet": {
       "post": {
-        "summary": "SIWE or NEAR signature. Links the wallet to the signed-in user, or signs in by wallet.",
+        "summary": "SIWE or NEAR (NEP-413) signature. Signs in or signs up by wallet; with a bearer token, links the wallet to that account.",
         "tags": [
           "auth"
         ],
@@ -189,7 +342,8 @@
                         "type": "string"
                       },
                       "nonce": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "the hex nonce from /auth/nonce (its 32 bytes are the NEP-413 nonce)"
                       },
                       "recipient": {
                         "type": "string"
@@ -230,12 +384,17 @@
                     },
                     "userId": {
                       "type": "string"
+                    },
+                    "isNewUser": {
+                      "type": "boolean",
+                      "description": "true when this sign-in created the account (sign-up)"
                     }
                   },
                   "required": [
                     "accessToken",
                     "expiresIn",
-                    "userId"
+                    "userId",
+                    "isNewUser"
                   ],
                   "additionalProperties": false
                 }
@@ -247,7 +406,7 @@
     },
     "/v1/auth/refresh": {
       "post": {
-        "summary": "Rotate the httpOnly refresh cookie, get a new access token",
+        "summary": "Rotate the httpOnly refresh cookie and get a new access token (call on app load to restore the session)",
         "tags": [
           "auth"
         ],
@@ -267,12 +426,17 @@
                     },
                     "userId": {
                       "type": "string"
+                    },
+                    "isNewUser": {
+                      "type": "boolean",
+                      "description": "true when this sign-in created the account (sign-up)"
                     }
                   },
                   "required": [
                     "accessToken",
                     "expiresIn",
-                    "userId"
+                    "userId",
+                    "isNewUser"
                   ],
                   "additionalProperties": false
                 }
@@ -344,12 +508,17 @@
                     },
                     "userId": {
                       "type": "string"
+                    },
+                    "isNewUser": {
+                      "type": "boolean",
+                      "description": "true when this sign-in created the account (sign-up)"
                     }
                   },
                   "required": [
                     "accessToken",
                     "expiresIn",
-                    "userId"
+                    "userId",
+                    "isNewUser"
                   ],
                   "additionalProperties": false
                 }

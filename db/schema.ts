@@ -12,7 +12,10 @@ import {
   uniqueIndex,
   serial,
   numeric,
+  customType,
 } from "drizzle-orm/pg-core";
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
 
 export const protocolStatus = pgEnum("protocol_status", [
   "draft",
@@ -307,5 +310,14 @@ export const waitlist = pgTable("waitlist", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull(),
   protocolType: text("protocol_type").notNull(),
+  createdAt: ts("created_at").defaultNow().notNull(),
+});
+
+/** Object storage fallback when R2 is not configured (shared by every dyno, unlike local disk). */
+export const blobs = pgTable("blobs", {
+  key: text("key").primaryKey(),
+  data: bytea("data").notNull(),
+  contentType: text("content_type").notNull(),
+  bytes: integer("bytes").notNull(),
   createdAt: ts("created_at").defaultNow().notNull(),
 });

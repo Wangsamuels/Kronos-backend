@@ -6,7 +6,7 @@ import { z } from "zod";
  * Optional integrations fall back to clearly labelled local modes so the repo runs end to end
  * without third-party keys:
  *   - no NEAR_AI_API_KEY / LLM key  -> LLM_PROVIDER=heuristic (deterministic rule-based agents)
- *   - no R2_*                       -> local filesystem storage under .data/storage
+ *   - no R2_*                       -> objects stored in Postgres (works across Heroku dynos)
  *   - no GITHUB_APP_*               -> public clones only; PR step returns a zip download instead
  *   - no ATTESTOR_PRIVATE_KEY       -> attestor disabled
  *   - no NEAR_FUNCTION_CALL_KEY     -> monitor logs the tighten call it would have made
@@ -22,11 +22,14 @@ const schema = z.object({
   DATABASE_URL: z.string().default("postgres://postgres:postgres@localhost:5432/kronos"),
   DATABASE_SSL: bool,
   REDIS_URL: z.string().default("redis://localhost:6379"),
-  REDIS_TLS_INSECURE: bool,
   JWT_SECRET: z.string().min(16).default("dev-only-secret-change-me-please"),
   ALLOW_DEV_LOGIN: bool,
   COOKIE_SAMESITE: z.enum(["lax", "none", "strict"]).optional(),
   COOKIE_DOMAIN: z.string().optional(),
+  // "/" so the refresh cookie also works when the frontend proxies the API under a path (e.g. /api)
+  COOKIE_PATH: z.string().default("/"),
+  // NEP-413 `recipient` the NEAR wallet signs for; defaults to the frontend's host
+  NEAR_SIGNIN_RECIPIENT: z.string().optional(),
   ACCESS_TOKEN_TTL: z.coerce.number().default(15 * 60),
   REFRESH_TOKEN_TTL: z.coerce.number().default(30 * 24 * 3600),
 
@@ -64,7 +67,6 @@ const schema = z.object({
   R2_ACCESS_KEY: z.string().optional(),
   R2_SECRET_KEY: z.string().optional(),
   R2_BUCKET: z.string().default("kronos"),
-  LOCAL_STORAGE_DIR: z.string().default(".data/storage"),
 
   ALERT_WEBHOOK_URL: z.string().optional(),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
@@ -91,6 +93,8 @@ function load(): Env {
     process.exit(1);
   }
   const e = parsed.data;
+  e.FRONTEND_URL = e.FRONTEND_URL.replace(/\/$/, "");
+  e.NEAR_SIGNIN_RECIPIENT ??= new URL(e.FRONTEND_URL).host;
   if (!e.LLM_PROVIDER) {
     e.LLM_PROVIDER = e.NEAR_AI_API_KEY ? "near-ai" : e.LLM_API_KEY && e.LLM_BASE_URL ? "openai-compatible" : "heuristic";
   }
@@ -105,7 +109,7 @@ export const env = load();
 
 export const integrations = {
   llm: env.LLM_PROVIDER as string,
-  storage: env.R2_ENDPOINT && env.R2_ACCESS_KEY && env.R2_SECRET_KEY ? "r2" : "local",
+  storage: env.R2_ENDPOINT && env.R2_ACCESS_KEY && env.R2_SECRET_KEY ? "r2" : "postgres",
   githubApp: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY),
   githubOAuth: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
   attestor: Boolean(env.ATTESTOR_PRIVATE_KEY),
