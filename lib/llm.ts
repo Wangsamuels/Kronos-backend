@@ -92,21 +92,23 @@ export async function llmJson<T>(call: LlmCall<T>): Promise<LlmResult<T>> {
           model,
           messages,
           temperature: call.slot === "B" ? 0.4 : 0.1,
-          max_tokens: call.maxTokens ?? 4096,
+          max_tokens: call.maxTokens ?? 16_000, // reasoning models spend tokens thinking before they answer
           response_format: { type: "json_object" },
         }),
-        signal: AbortSignal.timeout(120_000),
+        signal: AbortSignal.timeout(300_000),
       });
       if (res.status === 429 || res.status >= 500) throw new Error(`LLM HTTP ${res.status}`);
       if (!res.ok) throw new Error(`LLM HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
       const body = (await res.json()) as {
         id?: string;
-        choices: { message: { content: string } }[];
+        choices: { message: { content: string | null; reasoning_content?: string | null }; finish_reason?: string }[];
         usage?: { total_tokens?: number };
       };
       const tokens = body.usage?.total_tokens ?? 0;
       await addTokens(call.runId, tokens);
-      const text = body.choices?.[0]?.message?.content ?? "";
+      const msg = body.choices?.[0]?.message;
+      // Reasoning models occasionally put the final JSON only in reasoning_content (or run out of tokens).
+      const text = msg?.content ?? msg?.reasoning_content ?? "";
       const parsed = call.schema.safeParse(extractJson(text));
       if (parsed.success) return { data: parsed.data, provider: env.LLM_PROVIDER!, model, tokens, chatId: body.id };
       // repair round: show the model exactly what failed validation
