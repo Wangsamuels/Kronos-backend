@@ -8,6 +8,9 @@
  *
  *   API_URL=... npx tsx scripts/kronos-cli.ts register 1313161555
  *       registers contracts/deployments/<chainId>.json with Kronos and prints the on-chain verification
+ *
+ *   NEAR_ACCOUNT_ID=... NEAR_FUNCTION_CALL_KEY=ed25519:... NEAR_REGISTRY_CONTRACT=... npx tsx scripts/kronos-cli.ts near-demo
+ *       with the monitor's function-call key: tighten (pause the THIN market) succeeds, unpause is rejected
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -102,8 +105,30 @@ async function register(chainId: string) {
   console.log(dep.verified ? `\nVerified: protocol ${state.protocolId} is live on chain ${chainId}.` : "\nNot verified: fix the ✗ checks above and register again.");
 }
 
+async function nearDemo() {
+  const state = JSON.parse(fs.readFileSync(STATE, "utf8")) as { protocolId: string };
+  const d = JSON.parse(fs.readFileSync(path.join(DEPLOY_DIR, "1313161555.json"), "utf8")) as Record<string, string>;
+  const { nearTighten, nearTryLoosen, nearView } = await import("../lib/near.js");
+  const net = process.env.NEAR_NETWORK === "mainnet" ? "mainnet" : "testnet";
+  console.log(`Monitor key: tighten protocol ${state.protocolId} (pause the THIN market)`);
+  const t = await nearTighten(state.protocolId, { Pause: { market: d.thin.toLowerCase() } }, "near-demo: oracle anomaly on THIN");
+  if (t.dryRun) throw new Error("NEAR_ACCOUNT_ID / NEAR_FUNCTION_CALL_KEY are not set");
+  console.log(t.ok ? `  ✓ tighten accepted: https://${net === "testnet" ? "testnet." : ""}nearblocks.io/txns/${t.tx}` : `  ✗ tighten failed: ${t.error}`);
+  console.log("Same key tries to loosen (unpause):");
+  const l = await nearTryLoosen(state.protocolId, d.thin.toLowerCase());
+  console.log(l.rejected ? `  ✓ rejected: ${(l.error ?? "").split("\n")[0].slice(0, 160)}` : "  ✗ loosen was ACCEPTED (key is not restricted!)");
+  const p = await nearView<{ paused: Record<string, boolean>; status: string }>("get_protocol", { protocol_id: state.protocolId });
+  console.log(`Registry now: status=${p?.status}, paused=${JSON.stringify(p?.paused)}`);
+}
+
 const [cmd, arg] = process.argv.slice(2);
-(cmd === "prepare" ? prepare() : cmd === "register" ? register(arg) : Promise.reject(new Error("commands: prepare | register <chainId>"))).catch((e) => {
+(cmd === "prepare"
+  ? prepare()
+  : cmd === "register"
+    ? register(arg)
+    : cmd === "near-demo"
+      ? nearDemo()
+      : Promise.reject(new Error("commands: prepare | register <chainId> | near-demo"))).catch((e) => {
   console.error(String(e.message ?? e));
   process.exit(1);
 });

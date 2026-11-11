@@ -1,4 +1,4 @@
 [toolchain]
-# NEAR's VM does not accept some WASM features emitted by the newest rustc; 1.86 is known-good.
-channel = "1.86.0"
+# near-sdk 5.30 needs rustc >= 1.95. Build with `cargo near build`, which applies NEAR's WASM settings.
+channel = "stable"
 targets = ["wasm32-unknown-unknown"]

@@ -12,9 +12,8 @@
 //!   Signatures guardian) can apply it as a Tier 0 tighten on the EVM chain.
 
 use near_sdk::json_types::{U128, U64};
-use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::store::{IterableMap, IterableSet, Vector};
-use near_sdk::{env, near, require, AccountId, BorshStorageKey, NearSchema, PanicOnDefault};
+use near_sdk::{env, near, require, AccountId, BorshStorageKey, PanicOnDefault};
 use std::collections::BTreeMap;
 
 #[near(serializers = [borsh])]
@@ -51,10 +50,8 @@ pub struct Protocol {
     pub registered_at: U64,
 }
 
-#[derive(Serialize, Deserialize, NearSchema, Clone, Debug, PartialEq)]
-#[serde(crate = "near_sdk::serde")]
-#[borsh(crate = "near_sdk::borsh")]
-#[derive(near_sdk::borsh::BorshSerialize, near_sdk::borsh::BorshDeserialize)]
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TightenAction {
     Pause { market: Option<String> },
     LowerCap { market: String, new_cap: U128 },
