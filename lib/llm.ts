@@ -5,6 +5,7 @@ import { redis } from "./redis.js";
 import { logger } from "./logger.js";
 import { db, schema } from "../db/client.js";
 import { eq, sql } from "drizzle-orm";
+import { emit } from "./events.js";
 
 /**
  * llm.ts — the single LLM gateway. Every agent call goes through `llmJson`:
@@ -121,6 +122,8 @@ export async function llmJson<T>(call: LlmCall<T>): Promise<LlmResult<T>> {
     }
   }
   logger.warn({ err: String(lastErr), agent: call.agent }, "llm failed after retries; using heuristic agent");
+  // Make the fallback visible in the run's live log, not only in server logs.
+  await emit(call.runId, "log", call.agent, `LLM call failed (${String(lastErr).slice(0, 200)}); used the deterministic ${call.agent} instead`, undefined, "warn").catch(() => undefined);
   return { data: await call.heuristic(), provider: "heuristic-fallback", model: "heuristic", tokens: 0 };
 }
 

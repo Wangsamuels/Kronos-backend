@@ -42,8 +42,8 @@ const schema = z.object({
   LLM_PROVIDER: z.enum(["near-ai", "openai-compatible", "heuristic"]).optional(),
   NEAR_AI_API_KEY: z.string().optional(),
   NEAR_AI_BASE_URL: z.string().default("https://cloud-api.near.ai/v1"),
-  LLM_MODEL_A: z.string().default("zai-org/GLM-5.1-FP8"),
-  LLM_MODEL_B: z.string().default("zai-org/GLM-5.1-FP8"), // drafter B diverges by prompt; set a different model if available
+  LLM_MODEL_A: z.string().default("z-ai/glm-5.3"),
+  LLM_MODEL_B: z.string().default("Qwen/Qwen3.6-35B-A3B-FP8"), // a different model family keeps drafter B independent
   LLM_BASE_URL: z.string().optional(),
   LLM_API_KEY: z.string().optional(),
   LLM_TOKEN_BUDGET: z.coerce.number().default(400_000),

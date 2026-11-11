@@ -67,7 +67,7 @@ Ethereum (SIWE) and NEAR wallet sign-in need no keys.
 |---|---|
 | `LLM_PROVIDER` | `near-ai` (unset = deterministic heuristic agents) |
 | `NEAR_AI_API_KEY` | from the NEAR AI Cloud dashboard |
-| `LLM_MODEL_A` / `LLM_MODEL_B` | default `zai-org/GLM-5.1-FP8`; set B to a different model to make the drafters truly independent |
+| `LLM_MODEL_A` / `LLM_MODEL_B` | `z-ai/glm-5.3` / `Qwen/Qwen3.6-35B-A3B-FP8` (two model families keep the drafters independent). Must be IDs from `https://cloud-api.near.ai/v1/models`; check with `npm run kronos -- llm-check` |
 | `LLM_TOKEN_BUDGET` | `400000` per run |
 
 ### Chains, attestor, monitor (after §3)

@@ -121,6 +121,37 @@ async function nearDemo() {
   console.log(`Registry now: status=${p?.status}, paused=${JSON.stringify(p?.paused)}`);
 }
 
+/** One chat completion against NEAR AI Cloud with the same request shape the backend uses. */
+async function llmCheck() {
+  const key = process.env.NEAR_AI_API_KEY;
+  if (!key) throw new Error("set NEAR_AI_API_KEY (heroku config:get NEAR_AI_API_KEY -a kronos)");
+  const base = (process.env.NEAR_AI_BASE_URL ?? "https://cloud-api.near.ai/v1").replace(/\/$/, "");
+  const model = process.env.LLM_MODEL_A ?? "z-ai/glm-5.3";
+  const models = await fetch(`${base}/models`, { headers: { authorization: `Bearer ${key}` } });
+  const list = models.ok ? ((await models.json()) as { data?: { id: string }[] }).data?.map((m) => m.id) ?? [] : [];
+  console.log(`models available (${list.length}): ${list.slice(0, 15).join(", ")}${list.length > 15 ? ", …" : ""}`);
+  console.log(list.includes(model) ? `  ✓ ${model} is available` : `  ✗ ${model} is NOT in the list: set LLM_MODEL_A / LLM_MODEL_B to one of the above`);
+  for (const withFormat of [true, false]) {
+    const r = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: "Respond with ONE JSON object only." },
+          { role: "user", content: 'Return {"ok": true}' },
+        ],
+        temperature: 0.1,
+        max_tokens: 64,
+        ...(withFormat ? { response_format: { type: "json_object" } } : {}),
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    const text = await r.text();
+    console.log(`chat/completions ${withFormat ? "with" : "without"} response_format: HTTP ${r.status} ${text.slice(0, 300)}`);
+  }
+}
+
 const [cmd, arg] = process.argv.slice(2);
 (cmd === "prepare"
   ? prepare()
@@ -128,7 +159,9 @@ const [cmd, arg] = process.argv.slice(2);
     ? register(arg)
     : cmd === "near-demo"
       ? nearDemo()
-      : Promise.reject(new Error("commands: prepare | register <chainId> | near-demo"))).catch((e) => {
+      : cmd === "llm-check"
+        ? llmCheck()
+        : Promise.reject(new Error("commands: prepare | register <chainId> | near-demo | llm-check"))).catch((e) => {
   console.error(String(e.message ?? e));
   process.exit(1);
 });
