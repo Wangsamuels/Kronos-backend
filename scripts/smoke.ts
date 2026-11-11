@@ -89,8 +89,10 @@ async function main() {
   if (att.blockNumber === 0n) bad("no attestation yet: is the deployment registered and the worker running with ATTESTOR_PRIVATE_KEY?");
   else {
     const age = Number(head - att.blockNumber);
-    const fresh = await live.readContract({ address: d.registry, abi: attestationRegistryAbi, functionName: "isFresh", args: [guard, 1800n] });
-    fresh ? ok(`attestation is fresh (${age} blocks old, oracleOk=${att.oracleOk}, solvencyOk=${att.solvencyOk})`) : bad(`attestation is stale (${age} blocks old)`);
+    const maxAge = (await live.readContract({ address: guard, abi: kronosGuardAbi, functionName: "params" }))[3];
+    const fresh = await live.readContract({ address: d.registry, abi: attestationRegistryAbi, functionName: "isFresh", args: [guard, maxAge] });
+    fresh ? ok(`attestation is fresh (${age}/${maxAge} blocks old, posted ${Math.round((Date.now() / 1000 - Number(att.timestamp)) / 60)} min ago, oracleOk=${att.oracleOk}, solvencyOk=${att.solvencyOk})`)
+      : bad(`attestation is stale (${age}/${maxAge} blocks old, posted ${Math.round((Date.now() / 1000 - Number(att.timestamp)) / 60)} min ago)`);
   }
 
   console.log(`\n[2] Attacks on an anvil fork of chain ${chainId} (nothing is broadcast)`);

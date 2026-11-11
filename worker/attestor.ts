@@ -66,7 +66,21 @@ async function attestOne(dep: typeof schema.deployments.$inferSelect, protocolId
     samples.push(window.length);
   }
   const { oracleOk, solvencyOk } = decide({ assets, spots, twaps, totalAssets, totalLiabilities, maxDeviationBps: params[2], samples });
-  const blockNumber = (await c.getBlockNumber()) - 1n;
+  const head = await c.getBlockNumber();
+  // Post only when needed: the current attestation is past half its allowed age (in blocks; block times
+  // differ a lot, e.g. Base Sepolia ~0.2s vs Aurora ~0.6s), or the oracle/solvency verdict changed.
+  // TWAP samples are still collected on every tick.
+  const latest = (await c.readContract({
+    address: dep.registryAddress as Address,
+    abi: attestationRegistryAbi,
+    functionName: "latest",
+    args: [guard],
+  })) as { blockNumber: bigint; oracleOk: boolean; solvencyOk: boolean };
+  const maxAge = params[3] > 0n ? params[3] : 1800n;
+  const age = latest.blockNumber === 0n ? maxAge : head - latest.blockNumber;
+  const verdictChanged = latest.blockNumber !== 0n && (latest.oracleOk !== oracleOk || latest.solvencyOk !== solvencyOk);
+  if (age < maxAge / 2n && !verdictChanged) return;
+  const blockNumber = head - 1n;
   const hash = (await c.readContract({
     address: dep.registryAddress as Address,
     abi: attestationRegistryAbi,
@@ -126,6 +140,6 @@ export function startAttestor(): () => void {
   };
   const t = setInterval(() => void tick(), env.ATTESTOR_INTERVAL_MS);
   void tick();
-  logger.info({ intervalMs: env.ATTESTOR_INTERVAL_MS }, "attestor started");
+  logger.info({ checkEveryMs: env.ATTESTOR_INTERVAL_MS }, "attestor started (posts when an attestation passes half its max age)");
   return () => clearInterval(t);
 }

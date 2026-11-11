@@ -54,7 +54,7 @@ const schema = z.object({
   RPC_LOCAL: z.string().optional(),
 
   ATTESTOR_PRIVATE_KEY: z.string().optional(),
-  ATTESTOR_INTERVAL_MS: z.coerce.number().default(15_000),
+  ATTESTOR_INTERVAL_MS: z.coerce.number().default(60_000), // how often to check; posts only when needed
   MONITOR_PRIVATE_KEY: z.string().optional(), // EVM key holding the guard's tighten-only `monitor` role
   MONITOR_INTERVAL_MS: z.coerce.number().default(12_000),
   NEAR_NETWORK: z.enum(["testnet", "mainnet"]).default("testnet"),

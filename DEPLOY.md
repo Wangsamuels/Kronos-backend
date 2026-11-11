@@ -78,7 +78,7 @@ Ethereum (SIWE) and NEAR wallet sign-in need no keys.
 | `RPC_BASE_SEPOLIA` | `https://sepolia.base.org` (or a provider URL) |
 | `ETHERSCAN_API_KEY` | Etherscan v2 key (Base Sepolia source fetch + fork replay) |
 | `ATTESTOR_PRIVATE_KEY` | attestor key: must be the registry's `attestor`, funded on each chain |
-| `ATTESTOR_INTERVAL_MS` | `600000` on Aurora testnet (one tx per 10 min per live deployment; see §3.2) |
+| `ATTESTOR_INTERVAL_MS` | `60000`: how often the attestor checks. It only posts when an attestation passes half its allowed age or the verdict changes (see §3.2) |
 | `MONITOR_PRIVATE_KEY` | monitor key: the guard's `monitor` role (contract-enforced tighten-only), funded |
 | `NEAR_NETWORK` | `testnet` |
 | `NEAR_REGISTRY_CONTRACT` | the registry account from §4 |
@@ -185,8 +185,10 @@ cast balance $DEPLOYER_ADDRESS --ether --rpc-url https://testnet.aurora.dev
 cast balance $DEPLOYER_ADDRESS --ether --rpc-url https://sepolia.base.org
 ```
 
-Running costs: the attestor posts one transaction per live deployment per `ATTESTOR_INTERVAL_MS`. On
-Aurora use `600000` (10 min, ~0.0006 ETH/day); attestations stay fresh for 30 minutes.
+Running costs: the attestor checks every `ATTESTOR_INTERVAL_MS` (60 s) and posts only when the current
+attestation passes half its allowed age (`attestationMaxAgeBlocks`, 1800 blocks in the demo package) or
+the oracle/solvency verdict changes. Block times differ: about 0.6 s on Aurora testnet (a post roughly
+every 9 minutes) and about 0.2 s on Base Sepolia (roughly every 3 minutes, but Base gas is very cheap).
 
 ### 3.3 Get the approved parameters (so the config hash matches)
 
