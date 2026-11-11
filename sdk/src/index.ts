@@ -228,7 +228,12 @@ export class Kronos {
     const data = this.calldata(signed);
     if (opts.relayer) return opts.relayer(this.guard, data);
     const account = wallet.account as Account;
-    return wallet.sendTransaction({ account, chain: wallet.chain, to: this.guard, data } as never);
+    // Headroom over eth_estimateGas: the guard's post-checks earn gas refunds, and some nodes (anvil forks,
+    // possibly others) return estimates that run out of gas before the refund is applied.
+    const est = BigInt(
+      (await wallet.request({ method: "eth_estimateGas", params: [{ from: account.address, to: this.guard, data }] } as never)) as string,
+    );
+    return wallet.sendTransaction({ account, chain: wallet.chain, to: this.guard, data, gas: (est * 13n) / 10n } as never);
   }
 
   kindIndex(kind: IntentKind) {

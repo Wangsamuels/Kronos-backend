@@ -78,7 +78,7 @@ Ethereum (SIWE) and NEAR wallet sign-in need no keys.
 | `RPC_BASE_SEPOLIA` | `https://sepolia.base.org` (or a provider URL) |
 | `ETHERSCAN_API_KEY` | Etherscan v2 key (Base Sepolia source fetch + fork replay) |
 | `ATTESTOR_PRIVATE_KEY` | attestor key: must be the registry's `attestor`, funded on each chain |
-| `ATTESTOR_INTERVAL_MS` | `60000` on testnets (one tx per minute per live protocol) |
+| `ATTESTOR_INTERVAL_MS` | `600000` on Aurora testnet (one tx per 10 min per live deployment; see §3.2) |
 | `MONITOR_PRIVATE_KEY` | monitor key: the guard's `monitor` role (contract-enforced tighten-only), funded |
 | `NEAR_NETWORK` | `testnet` |
 | `NEAR_REGISTRY_CONTRACT` | the registry account from §4 |
@@ -104,76 +104,135 @@ Ethereum (SIWE) and NEAR wallet sign-in need no keys.
 
 ## 3. EVM contracts (Aurora testnet + Base Sepolia)
 
-### 3.1 Keys
-
-Use separate keys. The attestor and monitor must differ from the deployer, because the worker sends
-transactions with them continuously and nonces would collide.
+### 3.0 Tools (once, on your Mac)
 
 ```bash
-cast wallet new   # deployer (also admin + guardian + co-signer on testnet)
-cast wallet new   # attestor  -> ATTESTOR_PRIVATE_KEY
-cast wallet new   # monitor   -> MONITOR_PRIVATE_KEY
+curl -L https://foundry.paradigm.xyz | bash
+foundryup
+cd ~/kronos/kronos-backend && npm ci
 ```
 
-Fund all three with testnet ETH on Aurora testnet and Base Sepolia (faucets). The deployer needs the
-most; the attestor needs a steady trickle.
+### 3.1 Wallets and what each key is for
 
-### 3.2 Get the approved parameters (so the config hash matches)
+| Wallet | Env var (where) | Role |
+|---|---|---|
+| deployer | `DEPLOYER_PRIVATE_KEY` (your Mac only, **never** Heroku) | deploys everything; admin + guardian + co-signer on testnet |
+| attestor | `ATTESTOR_PRIVATE_KEY` (Heroku) · its address → `ATTESTOR_ADDRESS` at deploy | posts attestations to the registry |
+| monitor | `MONITOR_PRIVATE_KEY` (Heroku) · its address → `MONITOR_ADDRESS` at deploy | the guard's tighten-only `monitor` role |
 
-1. Run the app (local or Heroku), submit `sample://minilend` (or the MiniLend GitHub repo), choose the chain.
-2. Review → approve → download the package zip.
-3. Copy its `kronos.config.json` to `contracts/deployments/kronos.config.json`.
-
-### 3.3 Deploy
+The attestor and monitor must differ from the deployer: the worker sends transactions with them
+continuously and nonces would collide.
 
 ```bash
-cd contracts
-export RPC_AURORA_TESTNET=https://testnet.aurora.dev
-export RPC_BASE_SEPOLIA=https://sepolia.base.org
-export DEPLOYER_PRIVATE_KEY=0x...
-export ATTESTOR_ADDRESS=0x...      # address of the attestor key
-export MONITOR_ADDRESS=0x...       # address of the monitor key
-export GUARDIAN_ADDRESS=0x...      # optional, defaults to the deployer
+cast wallet new
+cast wallet new
+cast wallet new
+```
+
+Copy the three address / private-key pairs into a local file outside the repo:
+
+```bash
+nano ~/.kronos-keys.env
+```
+
+```
+DEPLOYER_PRIVATE_KEY=0x...
+DEPLOYER_ADDRESS=0x...
+ATTESTOR_PRIVATE_KEY=0x...
+ATTESTOR_ADDRESS=0x...
+MONITOR_PRIVATE_KEY=0x...
+MONITOR_ADDRESS=0x...
+```
+
+```bash
+chmod 600 ~/.kronos-keys.env
+set -a; source ~/.kronos-keys.env; set +a
+heroku config:set -a kronos ATTESTOR_PRIVATE_KEY=$ATTESTOR_PRIVATE_KEY MONITOR_PRIVATE_KEY=$MONITOR_PRIVATE_KEY
+```
+
+### 3.2 Testnet ETH
+
+Budget: a full deploy is ~14.1M gas (27 transactions).
+
+| Chain | Cost of one deploy | Where to get ETH |
+|---|---|---|
+| Aurora testnet | ~0.001 ETH (gas fixed at 0.07 gwei) | aurora.dev/faucet gives 0.001 ETH per claim (web only, no API). That's just short of one deploy, so either claim with all three wallets and send it to the deployer, or get Sepolia ETH (e.g. Google Cloud Web3 faucet) and bridge it with the testnet Rainbow Bridge (testnet.rainbowbridge.app). Aim for ≥ 0.003 ETH on the deployer. |
+| Base Sepolia | well under 0.001 ETH | Coinbase CDP faucet: web (portal.cdp.coinbase.com → Faucets) or CLI below; also the Alchemy / QuickNode Base Sepolia faucets |
+
+Base Sepolia from the command line (needs a free CDP account → API key + wallet secret; 0.0001 ETH per claim):
+
+```bash
+mkdir -p ~/cdp-faucet && cd ~/cdp-faucet && npm init -y >/dev/null && npm i @coinbase/cdp-sdk tsx >/dev/null
+export CDP_API_KEY_ID=... CDP_API_KEY_SECRET=... CDP_WALLET_SECRET=...
+cat > claim.ts <<'TS'
+import { CdpClient } from "@coinbase/cdp-sdk";
+const cdp = new CdpClient();
+for (const address of process.argv.slice(2)) {
+  for (let i = 0; i < 5; i++) {
+    const r = await cdp.evm.requestFaucet({ address: address as `0x${string}`, network: "base-sepolia", token: "eth" });
+    console.log(address, r.transactionHash);
+  }
+}
+TS
+npx tsx claim.ts $DEPLOYER_ADDRESS $ATTESTOR_ADDRESS $MONITOR_ADDRESS
+```
+
+Move ETH between your wallets and check balances:
+
+```bash
+cast send $ATTESTOR_ADDRESS --value 0.0003ether --private-key $DEPLOYER_PRIVATE_KEY --rpc-url https://testnet.aurora.dev --legacy
+cast balance $DEPLOYER_ADDRESS --ether --rpc-url https://testnet.aurora.dev
+cast balance $DEPLOYER_ADDRESS --ether --rpc-url https://sepolia.base.org
+```
+
+Running costs: the attestor posts one transaction per live deployment per `ATTESTOR_INTERVAL_MS`. On
+Aurora use `600000` (10 min, ~0.0006 ETH/day); attestations stay fresh for 30 minutes.
+
+### 3.3 Get the approved parameters (so the config hash matches)
+
+Heroku must be healthy and `ALLOW_DEV_LOGIN=true` (or pass `TOKEN=<access token>`):
+
+```bash
+cd ~/kronos/kronos-backend
+API_URL=https://kronos-9fbcca7bfc9b.herokuapp.com npm run kronos -- prepare
+```
+
+This submits the MiniLend sample, waits for the analysis (6/6 attacks blocked), approves it and writes
+`contracts/deployments/kronos.config.json` (approved parameters) and `kronos.protocol.json` (protocol id).
+
+### 3.4 Deploy (and verify source on the explorers in the same step)
+
+```bash
+cd ~/kronos/kronos-backend/contracts
+set -a; source ~/.kronos-keys.env; set +a
+export RPC_AURORA_TESTNET=https://testnet.aurora.dev RPC_BASE_SEPOLIA=https://sepolia.base.org
 export KRONOS_CONFIG=deployments/kronos.config.json
 
-forge script script/Deploy.s.sol --rpc-url aurora_testnet --broadcast --legacy --slow
-forge script script/Deploy.s.sol --rpc-url base_sepolia  --broadcast --slow
+forge script script/Deploy.s.sol --rpc-url aurora_testnet --broadcast --legacy --slow \
+  --verify --verifier blockscout --verifier-url https://explorer.testnet.aurora.dev/api/
+
+forge script script/Deploy.s.sol --rpc-url base_sepolia --broadcast --slow \
+  --verify --etherscan-api-key $ETHERSCAN_API_KEY
 ```
 
-Each run deploys the mock tokens and oracles, the thin THIN pool, `AttestationRegistry`, `GuardTimelock`,
-`GuardedMiniLend` (plus the unguarded `MiniLend` for side-by-side replays). It installs the tier table,
-lists the markets, sets the outflow threshold, closes setup and seeds 1M kUSDC of liquidity. Addresses
-are written to `contracts/deployments/<chainId>.json` (1313161555 = Aurora testnet, 84532 = Base Sepolia).
-Keep those files: the frontend demo and the commands below need them.
+Each run deploys the mock tokens and oracles, the thin THIN pool, `AttestationRegistry` (attestor =
+`ATTESTOR_ADDRESS`), `GuardTimelock`, `GuardedMiniLend` (monitor = `MONITOR_ADDRESS`) and the unguarded
+`MiniLend`, installs the tier table, lists the markets, sets the outflow threshold, closes setup and seeds
+1M kUSDC of liquidity. Addresses go to `contracts/deployments/1313161555.json` and `84532.json`; commit
+those (they're public) so the frontend can use them. Verification is optional: drop the `--verify …`
+flags if the explorer is slow; the deployment still works.
 
-If Aurora rejects a transaction, keep `--legacy` and add `--with-gas-price 70000000`.
-
-### 3.4 Verify source on the explorers (optional, good for judges)
+### 3.5 Register with Kronos (on-chain verification → live)
 
 ```bash
-# Aurora testnet (Blockscout)
-forge verify-contract <address> src/samples/GuardedMiniLend.sol:GuardedMiniLend \
-  --chain-id 1313161555 --verifier blockscout --verifier-url https://explorer.testnet.aurora.dev/api/ --watch
-# Base Sepolia (Etherscan v2)
-forge verify-contract <address> src/samples/GuardedMiniLend.sol:GuardedMiniLend \
-  --chain base-sepolia --etherscan-api-key $ETHERSCAN_API_KEY --watch
+cd ~/kronos/kronos-backend
+API_URL=https://kronos-9fbcca7bfc9b.herokuapp.com npm run kronos -- register 1313161555
+API_URL=https://kronos-9fbcca7bfc9b.herokuapp.com npm run kronos -- register 84532
 ```
 
-Constructor arguments are printed in `broadcast/Deploy.s.sol/<chainId>/run-latest.json` if the verifier asks.
-
-### 3.5 Register the deployment in Kronos
-
-From the frontend, or:
-
-```bash
-curl -X POST $API/v1/protocols/<protocolId>/deployments -H "authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' \
-  -d "{\"chainId\":1313161555,\"guardAddress\":\"$(jq -r .guardedMiniLend deployments/1313161555.json)\",\"timelockAddress\":\"$(jq -r .timelock deployments/1313161555.json)\"}"
-```
-
-All checks must pass (config hash, every entry point reverts without an intent, timelock owns every
-privileged function, setup closed). The protocol flips to `live`; the monitor and the attestor pick it up
-within a minute.
+All checks must show ✓ (config hash, every entry point reverts without an intent, timelock owns every
+privileged function, setup closed). The protocol goes `live`; the monitor and the attestor pick it up
+within a minute (`heroku logs --tail -a kronos --dyno worker`).
 
 ---
 

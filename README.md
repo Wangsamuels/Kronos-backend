@@ -64,6 +64,39 @@ No third-party keys are needed: without them the backend runs in clearly labelle
 (`GET /v1/meta` shows which): heuristic agents instead of an LLM, local disk instead of R2, zip download
 instead of a GitHub PR, dry-run NEAR calls.
 
+## Live testnet deployments
+
+The MiniLend demo is deployed with the parameters of the approved Kronos package (config hash
+`0x3be44e857e450e71827ee2ab7eab7f1f3b4dda31c978b67cd79cba250722ad24`) on **Aurora testnet (1313161555)**
+and **Base Sepolia (84532)**. The same deployer and nonce sequence gave identical addresses on both chains.
+Machine-readable copies: [`contracts/deployments/1313161555.json`](contracts/deployments/1313161555.json),
+[`contracts/deployments/84532.json`](contracts/deployments/84532.json).
+
+| Contract | Address | Aurora testnet | Base Sepolia |
+|---|---|---|---|
+| GuardedMiniLend (guarded protocol) | `0x2634d68199e59afFA02399f1e239d660F75E2e8c` | [explorer](https://explorer.testnet.aurora.dev/address/0x2634d68199e59afFA02399f1e239d660F75E2e8c) | [basescan](https://sepolia.basescan.org/address/0x2634d68199e59afFA02399f1e239d660F75E2e8c) |
+| GuardTimelock | `0xD35A5E3eB8890e8820e5EB03614Be6fb02a0d405` | [explorer](https://explorer.testnet.aurora.dev/address/0xD35A5E3eB8890e8820e5EB03614Be6fb02a0d405) | [basescan](https://sepolia.basescan.org/address/0xD35A5E3eB8890e8820e5EB03614Be6fb02a0d405) |
+| AttestationRegistry | `0x28d4dBdF3fAE4feADea564098797Cc1685aF1e0b` | [explorer](https://explorer.testnet.aurora.dev/address/0x28d4dBdF3fAE4feADea564098797Cc1685aF1e0b) | [basescan](https://sepolia.basescan.org/address/0x28d4dBdF3fAE4feADea564098797Cc1685aF1e0b) |
+| MiniLend (unguarded, for side-by-side replays) | `0x3860c6A53F5b152C03E59E1b11b8B2F7d04ED2b8` | [explorer](https://explorer.testnet.aurora.dev/address/0x3860c6A53F5b152C03E59E1b11b8B2F7d04ED2b8) | [basescan](https://sepolia.basescan.org/address/0x3860c6A53F5b152C03E59E1b11b8B2F7d04ED2b8) |
+| kUSDC (mock) | `0x8326F1Ef7456ed27FF6d7BA6635231f873cf1a8E` | [explorer](https://explorer.testnet.aurora.dev/address/0x8326F1Ef7456ed27FF6d7BA6635231f873cf1a8E) | [basescan](https://sepolia.basescan.org/address/0x8326F1Ef7456ed27FF6d7BA6635231f873cf1a8E) |
+| kWETH (mock) | `0x2355Bd309F5435AbDA697d1E2c737422a28a988B` | [explorer](https://explorer.testnet.aurora.dev/address/0x2355Bd309F5435AbDA697d1E2c737422a28a988B) | [basescan](https://sepolia.basescan.org/address/0x2355Bd309F5435AbDA697d1E2c737422a28a988B) |
+| THIN (thin-liquidity collateral) | `0xdCCECCD2955211AE82aB9a21A496d3da6320C7e2` | [explorer](https://explorer.testnet.aurora.dev/address/0xdCCECCD2955211AE82aB9a21A496d3da6320C7e2) | [basescan](https://sepolia.basescan.org/address/0xdCCECCD2955211AE82aB9a21A496d3da6320C7e2) |
+| THIN/kUSDC pool (spot oracle) | `0x6638d5522A96713461f3B00F725d6d4c0325B96C` | [explorer](https://explorer.testnet.aurora.dev/address/0x6638d5522A96713461f3B00F725d6d4c0325B96C) | [basescan](https://sepolia.basescan.org/address/0x6638d5522A96713461f3B00F725d6d4c0325B96C) |
+| Fixed price oracle (kWETH) | `0xeA551c0ca8DaAAb37ddeB974C1F37eE4974285B1` | [explorer](https://explorer.testnet.aurora.dev/address/0xeA551c0ca8DaAAb37ddeB974C1F37eE4974285B1) | [basescan](https://sepolia.basescan.org/address/0xeA551c0ca8DaAAb37ddeB974C1F37eE4974285B1) |
+
+Check a deployment yourself (read-only checks on the live chain, then the attacks on a local fork of it;
+nothing is broadcast and no gas is spent; needs Foundry):
+
+```bash
+npm run smoke -- 1313161555
+npm run smoke -- 84532
+```
+
+It confirms the code and config hash, timelock ownership and attestation freshness, then on the fork: a
+normal deposit + borrow succeeds, the oracle pump reverts at `CheckOracleFailed`, a stolen admin key can't
+list a fake collateral (direct call reverts; the timelock queues it as Tier 2 for 7 days), and the monitor
+key can tighten but not loosen the outflow window.
+
 ## Tests
 
 ```bash

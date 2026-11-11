@@ -14,3 +14,4 @@ sdk/node_modules/
 *.log
 dump.rdb
 contracts/deployments/kronos.config.json
+contracts/deployments/kronos.protocol.json
