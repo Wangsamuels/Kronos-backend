@@ -36,8 +36,15 @@ export async function putObject(key: string, body: Buffer | string, contentType 
 
 export async function getObject(key: string): Promise<Buffer> {
   if (integrations.storage === "r2") {
-    const res = await client().send(new GetObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
-    return Buffer.from(await res.Body!.transformToByteArray());
+    try {
+      const res = await client().send(new GetObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
+      return Buffer.from(await res.Body!.transformToByteArray());
+    } catch (e) {
+      // Objects written before R2 was configured live in Postgres: fall back to them.
+      const [old] = await db.select({ data: schema.blobs.data }).from(schema.blobs).where(eq(schema.blobs.key, key));
+      if (old) return Buffer.from(old.data);
+      throw e;
+    }
   }
   const [row] = await db.select({ data: schema.blobs.data }).from(schema.blobs).where(eq(schema.blobs.key, key));
   if (!row) throw notFound(`Object ${key}`);
@@ -47,6 +54,8 @@ export async function getObject(key: string): Promise<Buffer> {
 /** A URL the frontend can download from. R2: presigned (1h). Postgres: the API's own download route. */
 export async function downloadUrl(key: string, apiDownloadPath: string): Promise<string> {
   if (integrations.storage === "r2") {
+    const [old] = await db.select({ key: schema.blobs.key }).from(schema.blobs).where(eq(schema.blobs.key, key));
+    if (old) return `${env.PUBLIC_API_URL ?? ""}${apiDownloadPath}`; // written before R2: served by the API
     return getSignedUrl(client(), new GetObjectCommand({ Bucket: env.R2_BUCKET, Key: key }), { expiresIn: 3600 });
   }
   return `${env.PUBLIC_API_URL ?? ""}${apiDownloadPath}`;
