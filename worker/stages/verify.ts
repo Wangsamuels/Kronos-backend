@@ -11,7 +11,7 @@ import { runDir } from "../util/paths.js";
 import { buildGuard, protocolFiles } from "../build.js";
 import { buildWorkspace, compile, runTests, summarize, type AttackResult } from "../verifier.js";
 import { computeThresholds, forkReplay } from "../history.js";
-import { draftInvariants, mergeDrafts } from "../agents/agents.js";
+import { draftInvariants, mapHeuristic, mergeDrafts } from "../agents/agents.js";
 import { saveInvariants } from "./analyze.js";
 import type { InvariantDecision } from "../templates/generate.js";
 
@@ -74,6 +74,15 @@ export async function verify(job: StageJob) {
     compileLog = c.log;
     if (!c.ok) {
       await log.warn("Generated guard does not compile", { log: c.log.slice(-1500) });
+      // The compiler decides: if the agent's mapping produced code that doesn't compile, retry once with
+      // the deterministic AST mapping before giving up.
+      if (ingest.mappingSource && !ingest.mappingSource.startsWith("heuristic")) {
+        ingest.mapping = mapHeuristic(ingest.model);
+        ingest.mappingSource = "heuristic (agent mapping did not compile)";
+        await db.update(schema.analysisRuns).set({ ingest }).where(eq(schema.analysisRuns.id, runId));
+        await log.warn("Retrying with the deterministic AST mapping");
+        continue;
+      }
       note = "Generated guard failed to compile; see details";
       break;
     }

@@ -48,7 +48,7 @@ export function publicClient(chainId: number): PublicClient {
   let c = clients.get(chainId);
   if (!c) {
     const info = chainInfo(chainId);
-    c = createPublicClient({ chain: info.chain, transport: http(info.rpc, { retryCount: 3, timeout: 20_000 }) }) as PublicClient;
+    c = createPublicClient({ chain: info.chain, transport: http(info.rpc, { retryCount: 3, timeout: 20_000, batch: { batchSize: 50, wait: 20 } }) }) as PublicClient;
     clients.set(chainId, c);
   }
   return c;

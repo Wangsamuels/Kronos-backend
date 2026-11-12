@@ -194,6 +194,7 @@ export const Deployment = z.object({
 export const Event = z.object({
   id: z.string(),
   kind: z.string(),
+  chainId: z.number().nullable(),
   txHash: z.string().nullable(),
   invariantId: z.string().nullable(),
   asset: z.string().nullable(),
@@ -216,9 +217,19 @@ export const AdminAction = z.object({
   txHash: z.string().nullable(),
 });
 
+const AttestationSummary = z.object({
+  chainId: z.number(),
+  block: z.number(),
+  ageSeconds: z.number(),
+  oracleOk: z.boolean(),
+  solvencyOk: z.boolean(),
+  postedTx: z.string().nullable(),
+});
+
 export const Overview = z.object({
   protocol: Protocol,
-  deployment: Deployment.nullable(),
+  deployment: Deployment.nullable().describe("most recent deployment (kept for compatibility; see deployments)"),
+  deployments: z.array(Deployment).describe("latest deployment per chain"),
   stats24h: z.object({
     blocked: z.number(),
     queued: z.number(),
@@ -226,9 +237,8 @@ export const Overview = z.object({
     adminQueued: z.number(),
     alerts: z.number(),
   }),
-  attestation: z
-    .object({ block: z.number(), ageSeconds: z.number(), oracleOk: z.boolean(), solvencyOk: z.boolean(), postedTx: z.string().nullable() })
-    .nullable(),
+  attestation: AttestationSummary.nullable().describe("most recent attestation on any chain"),
+  attestations: z.array(AttestationSummary).describe("latest attestation per chain"),
   queuedOutflow: z.array(z.object({ asset: z.string(), amount: z.string(), claims: z.number() })),
   pendingAdminActions: z.number(),
 });

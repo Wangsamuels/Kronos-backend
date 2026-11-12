@@ -15,7 +15,11 @@ let s3: S3Client | undefined;
 function client() {
   s3 ??= new S3Client({
     region: "auto",
-    endpoint: env.R2_ENDPOINT,
+    // Accept the S3 API URL exactly as Cloudflare shows it, with or without a trailing "/<bucket>".
+    endpoint: env.R2_ENDPOINT!.replace(/\/+$/, "").replace(new RegExp(`/${env.R2_BUCKET}$`), ""),
+    // Path-style (<endpoint>/<bucket>/<key>): R2's TLS certificate doesn't cover <bucket>.<account>.r2.cloudflarestorage.com,
+    // so virtual-hosted style fails with an SSL handshake error.
+    forcePathStyle: true,
     credentials: { accessKeyId: env.R2_ACCESS_KEY!, secretAccessKey: env.R2_SECRET_KEY! },
   });
   return s3;

@@ -5,7 +5,8 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "../../db/client.js";
 import { env, integrations } from "../../lib/env.js";
 import { SUPPORTED_CHAIN_IDS } from "../../lib/chains.js";
-import { ApiError, conflict, notFound } from "../../lib/errors.js";
+import { ApiError, conflict, notFound, unauthorized } from "../../lib/errors.js";
+import { redis } from "../../lib/redis.js";
 import { endSession, issueSession, optionalAuth, requireAuth, rotateSession, verifyAccessToken } from "../auth.js";
 import { createNonce, verifyNear, verifySiwe } from "../walletAuth.js";
 import { Providers, Session, User } from "../schemas.js";
@@ -16,6 +17,7 @@ import { Providers, Session, User } from "../schemas.js";
  *
  *  GitHub : GET /v1/auth/github?returnTo=/path  ->  GitHub  ->  /v1/auth/github/callback
  *           -> FRONTEND_URL/auth/callback#access_token=…&expires_in=…&new_user=0|1&return_to=/path
+ *           -> (optional) POST /v1/auth/exchange {code} through the frontend origin: refresh cookie first-party
  *  EVM    : GET /v1/auth/nonce -> wallet signs SIWE -> POST /v1/auth/wallet {type:"siwe"}
  *  NEAR   : GET /v1/auth/nonce -> wallet signMessage (NEP-413) -> POST /v1/auth/wallet {type:"near"}
  *  Linking: a signed-in user adds a wallet by calling /auth/wallet with their bearer token, or adds
@@ -191,8 +193,12 @@ const routes: FastifyPluginAsyncZod = async (app) => {
         isNew = true;
       }
       const s = await issueSession(reply, userId, isNew);
+      // One-time code (60s) the frontend exchanges through its own origin (Vercel /api rewrite), so the
+      // refresh cookie also lands first-party; browsers that block third-party cookies keep the session.
+      const exchange = crypto.randomBytes(24).toString("base64url");
+      await redis().set(`kronos:authx:${exchange}`, JSON.stringify({ userId, isNew }), "EX", 60);
       return reply.redirect(
-        frontendCallback({ access_token: s.accessToken, expires_in: String(s.expiresIn), new_user: isNew ? "1" : "0", return_to: returnTo }),
+        frontendCallback({ access_token: s.accessToken, expires_in: String(s.expiresIn), new_user: isNew ? "1" : "0", code: exchange, return_to: returnTo }),
       );
     },
   );
@@ -244,6 +250,25 @@ const routes: FastifyPluginAsyncZod = async (app) => {
       if (existing) return issueSession(reply, existing.id, false);
       const [user] = await db.insert(schema.users).values({ [field]: value }).returning();
       return issueSession(reply, user.id, true);
+    },
+  );
+
+  app.post(
+    "/auth/exchange",
+    {
+      schema: {
+        tags: ["auth"],
+        summary: "Exchange the one-time `code` from the GitHub callback for a session; sets the refresh cookie on the calling origin (use through the frontend's /api rewrite)",
+        body: z.object({ code: z.string().min(16).max(64) }),
+        response: { 200: Session },
+      },
+    },
+    async (req, reply) => {
+      const key = `kronos:authx:${req.body.code}`;
+      const raw = await redis().getdel(key);
+      if (!raw) throw unauthorized("Sign-in code expired or already used");
+      const v = JSON.parse(raw) as { userId: string; isNew: boolean };
+      return issueSession(reply, v.userId, v.isNew);
     },
   );
 

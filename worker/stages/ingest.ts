@@ -10,7 +10,7 @@ import { run, which } from "../util/exec.js";
 import { ensureDir, runDir } from "../util/paths.js";
 import { fetchSources } from "../source.js";
 import { buildModel, concreteContracts } from "../ast.js";
-import { classify } from "../agents/agents.js";
+import { classify, classifyHeuristic } from "../agents/agents.js";
 import { failRun, loadRun, setStage, projectPath, type IngestData } from "../context.js";
 
 /**
@@ -79,6 +79,12 @@ export async function ingest(job: StageJob) {
   }
 
   const cls = await classify(runId, model);
+  // Deterministic floor: a clear lending signature in the AST is never turned away by the agent.
+  const floor = classifyHeuristic(model);
+  if (cls.data.type !== "lending" && floor.type === "lending" && floor.confidence >= 0.7) {
+    await log.warn(`Agent classified this as ${cls.data.type}; the AST shows a clear lending signature, continuing as lending`);
+    cls.data = { ...floor, reasons: [...floor.reasons, `agent said ${cls.data.type}`] };
+  }
   await log.info(`Classified as ${cls.data.type} (${Math.round(cls.data.confidence * 100)}%): ${cls.data.reasons.join("; ")}`, { provider: cls.provider });
 
   const { root: _root, ...src } = bundle;

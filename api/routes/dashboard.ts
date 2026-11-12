@@ -39,6 +39,11 @@ const routes: FastifyPluginAsyncZod = async (app) => {
         (req.body.timelockAddress as Address | undefined) ?? null,
         pkg.manifest as PackageManifestForVerify,
       );
+      // A new registration on a chain supersedes earlier ones there (monitor and attestor follow only the latest).
+      await db
+        .update(schema.deployments)
+        .set({ verified: false })
+        .where(and(eq(schema.deployments.protocolId, p.id), eq(schema.deployments.chainId, req.body.chainId)));
       const [d] = await db
         .insert(schema.deployments)
         .values({
@@ -86,12 +91,26 @@ const routes: FastifyPluginAsyncZod = async (app) => {
         .where(and(eq(schema.events.protocolId, p.id), gte(schema.events.ts, since)))
         .groupBy(schema.events.kind);
       const c = Object.fromEntries(counts.map((r) => [r.kind, r.n])) as Record<string, number>;
-      const [att] = await db
-        .select()
+      const atts = await db
+        .selectDistinctOn([schema.attestations.chainId])
         .from(schema.attestations)
         .where(eq(schema.attestations.protocolId, p.id))
-        .orderBy(desc(schema.attestations.block))
-        .limit(1);
+        .orderBy(schema.attestations.chainId, desc(schema.attestations.createdAt));
+      const attSummaries = atts
+        .map((a) => ({
+          chainId: a.chainId,
+          block: a.block,
+          ageSeconds: Math.round((Date.now() - a.createdAt.getTime()) / 1000),
+          oracleOk: a.oracleOk,
+          solvencyOk: a.solvencyOk,
+          postedTx: a.postedTx,
+        }))
+        .sort((x, y) => x.ageSeconds - y.ageSeconds);
+      const deps = await db
+        .selectDistinctOn([schema.deployments.chainId])
+        .from(schema.deployments)
+        .where(eq(schema.deployments.protocolId, p.id))
+        .orderBy(schema.deployments.chainId, desc(schema.deployments.createdAt));
       // queued outflow = queued minus released claims, by asset (claim ids tracked in data_json.claimId)
       const queued = await db.execute(sql`
         select q.asset, sum(q.amount)::text as amount, count(*)::int as claims
@@ -114,15 +133,9 @@ const routes: FastifyPluginAsyncZod = async (app) => {
           adminQueued: c.admin_queued ?? 0,
           alerts: c.alert ?? 0,
         },
-        attestation: att
-          ? {
-              block: att.block,
-              ageSeconds: Math.round((Date.now() - att.createdAt.getTime()) / 1000),
-              oracleOk: att.oracleOk,
-              solvencyOk: att.solvencyOk,
-              postedTx: att.postedTx,
-            }
-          : null,
+        attestation: attSummaries[0] ?? null,
+        attestations: attSummaries,
+        deployments: deps.map(toDeployment),
         queuedOutflow: (queued.rows as { asset: string; amount: string; claims: number }[]).map((r) => ({
           asset: r.asset ?? "unknown",
           amount: r.amount ?? "0",
@@ -197,7 +210,7 @@ const routes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["dashboard"],
         summary:
-          "Alert channels and desired outflow thresholds. Loosening a threshold on-chain is a Tier 1 timelock action; the monitor alerts against these values and can only tighten on its own.",
+          "Alert channels (used by the monitor), auto-tighten on/off, and the team's desired outflow thresholds (recorded here; changing them on-chain is a Tier 1 timelock action — the monitor itself can only tighten).",
         params: Id,
         body: Settings,
         response: { 200: Settings },

@@ -4,7 +4,7 @@ import { logger } from "../lib/logger.js";
 import { createRedis } from "../lib/redis.js";
 import { QUEUES, type StageJob, type PackageJob } from "../lib/queues.js";
 import { pool } from "../db/client.js";
-import { failRun } from "./context.js";
+import { failRun, reopenReview } from "./context.js";
 import { ingest } from "./stages/ingest.js";
 import { analyze } from "./stages/analyze.js";
 import { verify } from "./stages/verify.js";
@@ -32,7 +32,12 @@ function stageWorker<T extends StageJob>(name: keyof typeof QUEUES, fn: (d: T) =
     logger.error({ queue: name, runId: job?.data.runId, err: err.message }, "job failed");
     // Out of retries: surface the failure on the run so the frontend stops waiting.
     if (job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
-      await failRun(job.data.runId, job.data.protocolId, `${name.toUpperCase()}_FAILED`, err.message).catch(() => undefined);
+      if (name === "package") {
+        // The review was already approved: put the run back in review so the team can approve again.
+        await reopenReview(job.data.runId, job.data.protocolId, err.message).catch(() => undefined);
+      } else {
+        await failRun(job.data.runId, job.data.protocolId, `${name.toUpperCase()}_FAILED`, err.message).catch(() => undefined);
+      }
     }
   });
   workers.push(w);

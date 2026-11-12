@@ -34,8 +34,11 @@ const KIND_NAMES = ["Deposit", "Withdraw", "Borrow", "Repay", "Liquidate"];
 type Deployment = typeof schema.deployments.$inferSelect;
 type Protocol = typeof schema.protocols.$inferSelect;
 
-async function insertEvent(v: typeof schema.events.$inferInsert) {
-  await db.insert(schema.events).values(v).onConflictDoNothing();
+async function insertEvent(chainId: number, v: typeof schema.events.$inferInsert) {
+  await db
+    .insert(schema.events)
+    .values({ ...v, data: { ...((v.data as object | undefined) ?? {}), chainId } })
+    .onConflictDoNothing();
 }
 
 function selectorNames(): Map<string, string> {
@@ -105,7 +108,7 @@ export async function tightenOnChain(dep: Deployment, p: Protocol, reason: strin
         logger.warn({ err: String(e).slice(0, 200) }, "EVM tightenOutflow failed");
       }
     }
-    await insertEvent({
+    await insertEvent(dep.chainId, {
       protocolId: p.id,
       kind: "tightened",
       txHash: evmTx ?? near.tx ?? null,
@@ -123,7 +126,7 @@ async function anomaly(dep: Deployment, p: Protocol, title: string, detail: Reco
     .from(schema.events)
     .where(and(eq(schema.events.protocolId, p.id), eq(schema.events.kind, "alert"), gte(schema.events.ts, new Date(Date.now() - 3600_000)), sql`data_json->>'title' = ${title}`));
   if ((recent[0]?.n ?? 0) > 0) return; // de-duplicate within an hour
-  await insertEvent({ protocolId: p.id, kind: "alert", txHash: null, logIndex: null, data: json({ title, ...detail }) });
+  await insertEvent(dep.chainId, { protocolId: p.id, kind: "alert", txHash: null, logIndex: null, data: json({ title, ...detail }) });
   await sendAlert(p.name, title, detail, ((p.settings as { alerts?: AlertChannels }).alerts ?? {}) as AlertChannels);
   if (tighten) await tightenOnChain(dep, p, title);
 }
@@ -142,13 +145,13 @@ async function processLog(dep: Deployment, p: Protocol, l: Log, state: TickState
   const a = ev.args;
   switch (ev.eventName) {
     case "OutflowQueued":
-      await insertEvent({ ...base, kind: "queued", asset: String(a.asset).toLowerCase(), amount: String(a.amount), data: json({ claimId: String(a.id), to: a.to, releaseAt: a.releaseAt }) });
+      await insertEvent(dep.chainId, { ...base, kind: "queued", asset: String(a.asset).toLowerCase(), amount: String(a.amount), data: json({ claimId: String(a.id), to: a.to, releaseAt: a.releaseAt }) });
       break;
     case "OutflowReleased":
-      await insertEvent({ ...base, kind: "released", asset: String(a.asset).toLowerCase(), amount: String(a.amount), data: json({ claimId: String(a.id), reason: ["delay", "fresh attestation", "guardian"][Number(a.reason)] }) });
+      await insertEvent(dep.chainId, { ...base, kind: "released", asset: String(a.asset).toLowerCase(), amount: String(a.amount), data: json({ claimId: String(a.id), reason: ["delay", "fresh attestation", "guardian"][Number(a.reason)] }) });
       break;
     case "ThresholdTightened":
-      await insertEvent({ ...base, kind: "tightened", asset: String(a.asset).toLowerCase(), amount: String(a.newThreshold), data: json(a) });
+      await insertEvent(dep.chainId, { ...base, kind: "tightened", asset: String(a.asset).toLowerCase(), amount: String(a.newThreshold), data: json(a) });
       break;
     case "IntentExecuted":
       state.intents.push({ kind: KIND_NAMES[Number(a.kind)], signer: String(a.signer).toLowerCase(), amount: BigInt(a.amount as bigint), asset: String(a.asset).toLowerCase() });
@@ -171,7 +174,7 @@ async function processLog(dep: Deployment, p: Protocol, l: Log, state: TickState
           txHash: l.transactionHash,
         })
         .onConflictDoNothing();
-      await insertEvent({ ...base, kind: "admin_queued", data: json({ actionId: a.id, tier, selector: sel, functionName: SELECTORS.get(sel) ?? null, eta: a.eta }) });
+      await insertEvent(dep.chainId, { ...base, kind: "admin_queued", data: json({ actionId: a.id, tier, selector: sel, functionName: SELECTORS.get(sel) ?? null, eta: a.eta }) });
       if (tier >= 2) state.tier2.push({ functionName: SELECTORS.get(sel) ?? sel, actionId: Number(a.id) });
       break;
     }
@@ -180,17 +183,17 @@ async function processLog(dep: Deployment, p: Protocol, l: Log, state: TickState
         .update(schema.adminActions)
         .set({ status: "cancelled" })
         .where(and(eq(schema.adminActions.protocolId, p.id), eq(schema.adminActions.chainId, dep.chainId), eq(schema.adminActions.actionId, Number(a.id))));
-      await insertEvent({ ...base, kind: "admin_cancelled", data: json(a) });
+      await insertEvent(dep.chainId, { ...base, kind: "admin_cancelled", data: json(a) });
       break;
     case "ActionExecuted":
       await db
         .update(schema.adminActions)
         .set({ status: "executed" })
         .where(and(eq(schema.adminActions.protocolId, p.id), eq(schema.adminActions.chainId, dep.chainId), eq(schema.adminActions.actionId, Number(a.id))));
-      await insertEvent({ ...base, kind: "admin_executed", data: json(a) });
+      await insertEvent(dep.chainId, { ...base, kind: "admin_executed", data: json(a) });
       break;
     case "TightenExecuted":
-      await insertEvent({ ...base, kind: "tightened", data: json({ ...a, functionName: SELECTORS.get(String(a.selector)) ?? null }) });
+      await insertEvent(dep.chainId, { ...base, kind: "tightened", data: json({ ...a, functionName: SELECTORS.get(String(a.selector)) ?? null }) });
       break;
     case "RoleSet":
       if (a.enabled) state.newSigners.push(String(a.account).toLowerCase());
@@ -226,7 +229,7 @@ async function watch(dep: Deployment, p: Protocol) {
         const err = await decodeRevert(dep.chainId, { to: tx.to as Address, input: tx.input, from: tx.from, blockNumber: b });
         if (!err) continue;
         const fn = SELECTORS.get(tx.input.slice(0, 10)) ?? tx.input.slice(0, 10);
-        await insertEvent({ protocolId: p.id, kind: "blocked", txHash: tx.hash, logIndex: -1, invariantId: err.name, data: json({ function: fn, error: err.name, args: err.args, from: tx.from }) });
+        await insertEvent(dep.chainId, { protocolId: p.id, kind: "blocked", txHash: tx.hash, logIndex: -1, invariantId: err.name, data: json({ function: fn, error: err.name, args: err.args, from: tx.from }) });
       }
     }
   }
@@ -245,6 +248,27 @@ async function watch(dep: Deployment, p: Protocol) {
     }
   }
   if (state.newSigners.length) await anomaly(dep, p, "New signer added", { signers: state.newSigners }, false);
+  // Borrows concentrated on a collateral that is still on probation (newly listed or oracle just changed).
+  const borrows = state.intents.filter((i) => i.kind === "Borrow");
+  if (borrows.length) {
+    try {
+      const guard = dep.guardAddress as Address;
+      const params = (await c.readContract({ address: guard, abi: kronosGuardAbi, functionName: "params" })) as readonly bigint[];
+      const nowTs = BigInt(Math.floor(Date.now() / 1000));
+      const onProbation = new Map<string, number>();
+      for (const b of borrows) {
+        const acc = (await c.readContract({ address: guard, abi: guardedMiniLendAbi, functionName: "accounts", args: [b.signer as Address] })) as readonly [Address, bigint, bigint];
+        const m = (await c.readContract({ address: guard, abi: guardedMiniLendAbi, functionName: "markets", args: [acc[0]] })) as readonly unknown[];
+        const listedAt = BigInt(m[6] as bigint);
+        if (nowTs - listedAt < params[4]) onProbation.set(acc[0], (onProbation.get(acc[0]) ?? 0) + 1);
+      }
+      for (const [asset, n] of onProbation) {
+        if (n >= 3) await anomaly(dep, p, "Borrows concentrated on an asset still on probation", { asset, borrows: n }, true);
+      }
+    } catch {
+      /* protocol without the compound-v2-style getters: skip this flag */
+    }
+  }
   const outflows = state.intents.filter((i) => i.kind === "Withdraw" || i.kind === "Borrow");
   const bySize = new Map<string, Set<string>>();
   for (const o of outflows) {

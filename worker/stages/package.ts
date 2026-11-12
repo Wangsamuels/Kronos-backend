@@ -153,12 +153,19 @@ ${g.ok ? "" : `\n> ⚠️ ${g.reason}\n`}`;
     .values({ runId, version, configHash: g.configHash, manifest: {}, r2Key: "pending" })
     .returning();
   const base = `packages/${pkgRow.id}`;
-  const stored = await putObject(`${base}/kronos-package.zip`, zipBuf, "application/zip");
-  const prFiles = [];
-  for (const f of files) {
-    const key = `${base}/files/${f.path}`;
-    await putObject(key, f.content, "text/plain");
-    prFiles.push({ path: f.path, key });
+  let stored: Awaited<ReturnType<typeof putObject>>;
+  const prFiles: { path: string; key: string }[] = [];
+  try {
+    stored = await putObject(`${base}/kronos-package.zip`, zipBuf, "application/zip");
+    for (const f of files) {
+      const key = `${base}/files/${f.path}`;
+      await putObject(key, f.content, "text/plain");
+      prFiles.push({ path: f.path, key });
+    }
+  } catch (e) {
+    // never leave a half-built package behind (the API would serve it)
+    await db.delete(schema.packages).where(eq(schema.packages.id, pkgRow.id));
+    throw e;
   }
   const manifest = {
     version,

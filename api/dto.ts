@@ -102,6 +102,7 @@ export const toDeployment = (d: Row<"deployments">) => ({
 export const toEvent = (e: Row<"events">) => ({
   id: e.id,
   kind: e.kind,
+  chainId: typeof (e.data as { chainId?: unknown })?.chainId === "number" ? ((e.data as { chainId: number }).chainId) : null,
   txHash: e.txHash,
   invariantId: e.invariantId,
   asset: e.asset,

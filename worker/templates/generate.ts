@@ -35,9 +35,25 @@ export const PARAM_ORDER: (keyof GuardParams)[] = [
 
 const DISABLED = 2n ** 128n; // effectively "no limit" when an invariant is rejected
 
+const BOUNDS: Record<string, [number, number]> = {
+  protocolMinHealthBps: [10_000, 30_000],
+  maxSharePriceDeltaBps: [1, 1_000],
+  maxOracleDeviationBps: [10, 2_000],
+  attestationMaxAgeBlocks: [10, 1_000_000],
+  probationSeconds: [0, 30 * 86_400],
+  adminMaxUnderwaterIncrease: [0, Number.MAX_SAFE_INTEGER],
+};
+
 export function guardParamsFrom(invs: InvariantDecision[]): { params: GuardParams; disabled: Set<string> } {
   const on = (t: string) => invs.find((i) => i.template === t && i.status !== "rejected");
-  const n = (t: string, k: string, d: number) => Number((on(t)?.params as Record<string, unknown> | undefined)?.[k] ?? d);
+  // Agent-drafted values are clamped to vetted bounds; anything non-numeric falls back to the template default.
+  const n = (t: string, k: string, d: number) => {
+    const raw = (on(t)?.params as Record<string, unknown> | undefined)?.[k];
+    const v = typeof raw === "number" ? raw : Number(String(raw ?? "").replace(/[_,\s]/g, ""));
+    if (raw === undefined || !Number.isFinite(v)) return d;
+    const [lo, hi] = BOUNDS[k] ?? [0, Number.MAX_SAFE_INTEGER];
+    return Math.round(Math.min(hi, Math.max(lo, v)));
+  };
   const disabled = new Set(invs.filter((i) => i.status === "rejected").map((i) => i.template));
   return {
     params: {

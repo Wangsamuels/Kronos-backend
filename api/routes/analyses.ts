@@ -175,7 +175,7 @@ const routes: FastifyPluginAsyncZod = async (app) => {
       if (!u) throw conflict("Run already approved");
       await db.update(schema.protocols).set({ status: "approved", updatedAt: new Date() }).where(eq(schema.protocols.id, protocol.id));
       await emit(run.id, "stage", "review", "Review approved by the protocol team; building package");
-      await enqueueStage("package", { runId: run.id, protocolId: protocol.id });
+      await enqueueStage("package", { runId: run.id, protocolId: protocol.id }, String(Date.now())); // unique: approving again after a failed build must enqueue a new job
       return reply.code(202).send(toRun(u));
     },
   );

@@ -16,6 +16,7 @@ export interface IngestData {
   model: ProtocolModel;
   slither?: { ran: boolean; detectors?: Record<string, number>; error?: string };
   mapping?: MapperOutput;
+  mappingSource?: string; // llm provider name, or heuristic
   redTeam?: unknown;
   rounds?: number;
 }
@@ -42,6 +43,15 @@ export async function failRun(runId: string, protocolId: string, code: string, m
     .where(eq(schema.analysisRuns.id, runId));
   await db.update(schema.protocols).set({ status: protocolStatus, updatedAt: new Date() }).where(eq(schema.protocols.id, protocolId));
   await emit(runId, "error", "failed", message, { code });
+}
+
+export async function reopenReview(runId: string, protocolId: string, message: string) {
+  await db
+    .update(schema.analysisRuns)
+    .set({ status: "review", stage: "review", error: { code: "PACKAGE_FAILED", message } })
+    .where(eq(schema.analysisRuns.id, runId));
+  await db.update(schema.protocols).set({ status: "review", updatedAt: new Date() }).where(eq(schema.protocols.id, protocolId));
+  await emit(runId, "error", "package", `Package build failed: ${message}. The review is open again; approve to retry.`, { code: "PACKAGE_FAILED" });
 }
 
 /** Restores the source snapshot into the run workspace if this dyno doesn't have it (restart, other dyno). */

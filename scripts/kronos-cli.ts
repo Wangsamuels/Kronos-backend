@@ -121,6 +121,15 @@ async function nearDemo() {
   console.log(`Registry now: status=${p?.status}, paused=${JSON.stringify(p?.paused)}`);
 }
 
+/** Moves the demo protocol from the operator (dev login) account to a real account: transfer <userId>. */
+async function transfer(toUserId: string) {
+  if (!toUserId) throw new Error("usage: transfer <your user id from GET /v1/me after signing in on the frontend>");
+  const state = JSON.parse(fs.readFileSync(STATE, "utf8")) as { protocolId: string };
+  await login();
+  const p = await api<{ id: string; name: string }>("POST", `/v1/protocols/${state.protocolId}/transfer`, { toUserId });
+  console.log(`Protocol ${p.name} (${p.id}) now belongs to user ${toUserId}.`);
+}
+
 /** One chat completion against NEAR AI Cloud with the same request shape the backend uses. */
 async function llmCheck() {
   const key = process.env.NEAR_AI_API_KEY;
@@ -161,7 +170,9 @@ const [cmd, arg] = process.argv.slice(2);
       ? nearDemo()
       : cmd === "llm-check"
         ? llmCheck()
-        : Promise.reject(new Error("commands: prepare | register <chainId> | near-demo | llm-check"))).catch((e) => {
+        : cmd === "transfer"
+          ? transfer(arg)
+        : Promise.reject(new Error("commands: prepare | register <chainId> | near-demo | llm-check | transfer <userId>"))).catch((e) => {
   console.error(String(e.message ?? e));
   process.exit(1);
 });

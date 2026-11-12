@@ -136,7 +136,7 @@ export async function analyze(job: StageJob) {
   await db
     .update(schema.analysisRuns)
     .set({
-      ingest: { ...ingest, mapping: map, redTeam: rt.data, rounds: 0 },
+      ingest: { ...ingest, mapping: map, mappingSource: mapRes.provider, redTeam: rt.data, rounds: 0 },
       llm: { provider: providerName(), chatIds, models: [mapRes.model, a.model, b.model] },
     })
     .where(eq(schema.analysisRuns.id, runId));

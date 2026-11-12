@@ -3,7 +3,7 @@ import { z } from "zod";
 import { and, desc, eq, inArray, lt } from "drizzle-orm";
 import { db, schema } from "../../db/client.js";
 import { enqueueStage } from "../../lib/queues.js";
-import { conflict } from "../../lib/errors.js";
+import { conflict, notFound } from "../../lib/errors.js";
 import { chainInfo } from "../../lib/chains.js";
 import { requireAuth } from "../auth.js";
 import { latestRun, ownedProtocol } from "../access.js";
@@ -104,6 +104,27 @@ const routes: FastifyPluginAsyncZod = async (app) => {
       const p = await ownedProtocol(req.params.id, req.user!.id);
       const r = await latestRun(p.id);
       return toProtocol(p, r?.id ?? null);
+    },
+  );
+
+  app.post(
+    "/protocols/:id/transfer",
+    {
+      schema: {
+        tags: ["protocols"],
+        summary: "Transfer a protocol to another Kronos user (owner only), e.g. from a dev/operator account to your GitHub account",
+        params: Id,
+        body: z.object({ toUserId: z.string().uuid() }),
+        response: { 200: Protocol },
+      },
+    },
+    async (req) => {
+      const p = await ownedProtocol(req.params.id, req.user!.id);
+      const [target] = await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.id, req.body.toUserId));
+      if (!target) throw notFound("Target user");
+      const [u] = await db.update(schema.protocols).set({ ownerId: target.id, updatedAt: new Date() }).where(eq(schema.protocols.id, p.id)).returning();
+      const r = await latestRun(p.id);
+      return toProtocol(u, r?.id ?? null);
     },
   );
 

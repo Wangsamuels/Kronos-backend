@@ -208,6 +208,17 @@ export async function mapProtocol(runId: string, model: ProtocolModel): Promise<
     schema: MapperOutput,
     heuristic: () => h,
   });
+  // Deterministic floor under the agent: every entry point the AST pre-pass found stays mapped (an agent
+  // dropping one would leave it unguarded), unknown signatures are discarded, and key-state slots the
+  // agent left empty keep the pre-pass value.
+  const known = new Set(h.entrypoints.map((e) => e.signature));
+  const fromAgent = res.data.entrypoints.filter((e) => known.has(e.signature));
+  const seen = new Set(fromAgent.map((e) => e.signature));
+  res.data.entrypoints = [...fromAgent, ...h.entrypoints.filter((e) => !seen.has(e.signature))];
+  for (const [k, v] of Object.entries(h.keyState)) {
+    if (v && !(res.data.keyState as Record<string, unknown>)[k]) (res.data.keyState as Record<string, unknown>)[k] = v;
+  }
+  if (!res.data.coreContract) res.data.coreContract = h.coreContract;
   // Hard rule: anything the AST shows as access-controlled is privileged, whatever the model said.
   const acl = new Set(model.contracts.flatMap((c) => c.functions.filter((f) => f.accessControlled).map((f) => f.signature)));
   res.data.entrypoints = res.data.entrypoints.map((e) => (acl.has(e.signature) ? { ...e, role: "privileged" as const } : e));

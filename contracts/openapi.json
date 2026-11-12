@@ -181,9 +181,27 @@
     },
     "/v1/auth/github/install": {
       "get": {
-        "summary": "Install the Kronos GitHub App",
+        "summary": "Install the Kronos GitHub App (pass linkToken to attach it to the signed-in account)",
         "tags": [
           "auth"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "returnTo",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "linkToken",
+            "required": false
+          }
         ],
         "responses": {
           "200": {
@@ -364,6 +382,69 @@
                     "additionalProperties": false
                   }
                 ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accessToken": {
+                      "type": "string"
+                    },
+                    "expiresIn": {
+                      "type": "number"
+                    },
+                    "userId": {
+                      "type": "string"
+                    },
+                    "isNewUser": {
+                      "type": "boolean",
+                      "description": "true when this sign-in created the account (sign-up)"
+                    }
+                  },
+                  "required": [
+                    "accessToken",
+                    "expiresIn",
+                    "userId",
+                    "isNewUser"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/exchange": {
+      "post": {
+        "summary": "Exchange the one-time `code` from the GitHub callback for a session; sets the refresh cookie on the calling origin (use through the frontend's /api rewrite)",
+        "tags": [
+          "auth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "code"
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -1008,6 +1089,128 @@
         "tags": [
           "protocols"
         ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "websiteUrl": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "repoUrl": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "chainId": {
+                      "type": "number"
+                    },
+                    "addresses": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "draft",
+                        "analyzing",
+                        "review",
+                        "approved",
+                        "integrating",
+                        "live",
+                        "paused",
+                        "unsupported"
+                      ]
+                    },
+                    "latestRunId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "websiteUrl",
+                    "repoUrl",
+                    "chainId",
+                    "addresses",
+                    "type",
+                    "status",
+                    "latestRunId",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/protocols/{id}/transfer": {
+      "post": {
+        "summary": "Transfer a protocol to another Kronos user (owner only), e.g. from a dev/operator account to your GitHub account",
+        "tags": [
+          "protocols"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "toUserId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "toUserId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
         "parameters": [
           {
             "schema": {
@@ -2626,7 +2829,73 @@
                         "verifiedAt",
                         "createdAt"
                       ],
-                      "additionalProperties": false
+                      "additionalProperties": false,
+                      "description": "most recent deployment (kept for compatibility; see deployments)"
+                    },
+                    "deployments": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "protocolId": {
+                            "type": "string"
+                          },
+                          "packageId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "chainId": {
+                            "type": "number"
+                          },
+                          "guardAddress": {
+                            "type": "string"
+                          },
+                          "timelockAddress": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "registryAddress": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "verified": {
+                            "type": "boolean"
+                          },
+                          "checks": {},
+                          "verifiedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "protocolId",
+                          "packageId",
+                          "chainId",
+                          "guardAddress",
+                          "timelockAddress",
+                          "registryAddress",
+                          "verified",
+                          "verifiedAt",
+                          "createdAt"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "description": "latest deployment per chain"
                     },
                     "stats24h": {
                       "type": "object",
@@ -2662,6 +2931,9 @@
                         "null"
                       ],
                       "properties": {
+                        "chainId": {
+                          "type": "number"
+                        },
                         "block": {
                           "type": "number"
                         },
@@ -2682,13 +2954,54 @@
                         }
                       },
                       "required": [
+                        "chainId",
                         "block",
                         "ageSeconds",
                         "oracleOk",
                         "solvencyOk",
                         "postedTx"
                       ],
-                      "additionalProperties": false
+                      "additionalProperties": false,
+                      "description": "most recent attestation on any chain"
+                    },
+                    "attestations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "chainId": {
+                            "type": "number"
+                          },
+                          "block": {
+                            "type": "number"
+                          },
+                          "ageSeconds": {
+                            "type": "number"
+                          },
+                          "oracleOk": {
+                            "type": "boolean"
+                          },
+                          "solvencyOk": {
+                            "type": "boolean"
+                          },
+                          "postedTx": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "chainId",
+                          "block",
+                          "ageSeconds",
+                          "oracleOk",
+                          "solvencyOk",
+                          "postedTx"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "description": "latest attestation per chain"
                     },
                     "queuedOutflow": {
                       "type": "array",
@@ -2720,8 +3033,10 @@
                   "required": [
                     "protocol",
                     "deployment",
+                    "deployments",
                     "stats24h",
                     "attestation",
+                    "attestations",
                     "queuedOutflow",
                     "pendingAdminActions"
                   ],
@@ -2796,6 +3111,12 @@
                           "kind": {
                             "type": "string"
                           },
+                          "chainId": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
                           "txHash": {
                             "type": [
                               "string",
@@ -2828,6 +3149,7 @@
                         "required": [
                           "id",
                           "kind",
+                          "chainId",
                           "txHash",
                           "invariantId",
                           "asset",
@@ -3043,7 +3365,7 @@
         }
       },
       "patch": {
-        "summary": "Alert channels and desired outflow thresholds. Loosening a threshold on-chain is a Tier 1 timelock action; the monitor alerts against these values and can only tighten on its own.",
+        "summary": "Alert channels (used by the monitor), auto-tighten on/off, and the team's desired outflow thresholds (recorded here; changing them on-chain is a Tier 1 timelock action — the monitor itself can only tighten).",
         "tags": [
           "dashboard"
         ],
@@ -3185,7 +3507,7 @@
   },
   "servers": [
     {
-      "url": "https://kronos-api.herokuapp.com"
+      "url": "https://kronos-9fbcca7bfc9b.herokuapp.com"
     }
   ],
   "security": [
