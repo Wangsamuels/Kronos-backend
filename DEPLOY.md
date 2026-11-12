@@ -265,6 +265,27 @@ near contract call-function as-transaction kronos-registry-<you>.testnet registe
 Showcase check: `tighten` with the monitor key succeeds, and `unpause` with the same key is rejected by
 NEAR itself (the key can't call any other method).
 
+### 4.1 Chain Signatures (EVM tightens signed by NEAR MPC)
+
+Upgrading an existing registry keeps its state (no migration: the new data lives in separate keys):
+
+```bash
+cd near-registry && cargo near build non-reproducible-wasm
+near contract deploy kronos-registry-<you>.testnet use-file target/near/kronos_registry.wasm without-init-call \
+  network-config testnet sign-with-keychain send
+```
+
+1. Get the protocol's MPC address: `NEAR_REGISTRY_CONTRACT=kronos-registry-<you>.testnet npx tsx scripts/kronos-cli.ts chainsig-address`
+2. Send it ~0.002 ETH on Aurora testnet and on Base Sepolia (it pays gas for tightens).
+3. Deploy the guard with `MONITOR_ADDRESS=<that address>` (§3.4). The guard's monitor role is set at
+   deploy time; changing it later is a Tier 3 timelock action (14 days).
+4. Point the registry at each chain's guard (protocol owner):
+   `register_protocol` (or `set_package`) covers the chain it was registered with; for the other chain call
+   `set_evm_guard {"protocol_id":"<uuid>","chain_id":"84532","guard":"0x<guard>"}`.
+5. Check: `GET /v1/protocols/<uuid>/monitor` shows `usesChainSignatures: true` per chain, and
+   `npx tsx scripts/kronos-cli.ts chainsig-demo 1313161555` halves the outflow threshold through NEAR MPC
+   and shows a loosen being refused.
+
 ---
 
 ## 5. GitHub App (sign-in + private repos + PRs in one)

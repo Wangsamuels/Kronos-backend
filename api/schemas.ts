@@ -243,6 +243,25 @@ export const Overview = z.object({
   pendingAdminActions: z.number(),
 });
 
+export const MonitorInfo = z.object({
+  near: z.object({ network: z.string(), registry: z.string(), monitorAccount: z.string().nullable(), functionCallKey: z.boolean() }),
+  chainSignatures: z.object({
+    enabled: z.boolean(),
+    signer: z.string().describe("NEAR MPC signer contract"),
+    path: z.string().describe("derivation path; predecessor = the registry contract"),
+    evmAddress: z.string().nullable().describe("EVM address controlled by NEAR MPC for this protocol (same on every EVM chain)"),
+  }),
+  chains: z.array(
+    z.object({
+      chainId: z.number(),
+      guardAddress: z.string(),
+      guardMonitor: z.string().nullable(),
+      usesChainSignatures: z.boolean().describe("guard.monitor() is the derived address"),
+      derivedAddressBalanceWei: z.string().nullable(),
+    }),
+  ),
+});
+
 export const Settings = z.object({
   thresholds: z.record(z.object({ threshold: z.string(), staleLimit: z.string().optional() })).optional(),
   alerts: z

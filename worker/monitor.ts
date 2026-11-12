@@ -16,6 +16,7 @@ import { logger } from "../lib/logger.js";
 import { chainInfo, publicClient } from "../lib/chains.js";
 import { sendAlert, type AlertChannels } from "../lib/alerts.js";
 import { nearTighten } from "../lib/near.js";
+import { chainSigReady, chainSigTightenOutflow } from "../lib/chainsig.js";
 import { guardTimelockAbi, guardedMiniLendAbi, kronosGuardAbi } from "../lib/abi.generated.js";
 
 /**
@@ -24,8 +25,9 @@ import { guardTimelockAbi, guardedMiniLendAbi, kronosGuardAbi } from "../lib/abi
  *   - a new signer followed by a Tier 2 change          -> alert + tighten
  *   - many same-sized withdrawals to fresh addresses     -> alert + tighten
  *   - borrows concentrated on an asset still on probation -> alert
- * Reactions go through the NEAR registry's function-call key (`tighten` only) and, when configured, the
- * EVM key that holds the guard's `monitor` role (contract-enforced: tightenOutflow can only lower).
+ * Reactions go through the NEAR registry's function-call key (`tighten` only). When the guard's `monitor` is
+ * the protocol's MPC-derived address, the registry also signs the EVM `tightenOutflow` via NEAR Chain
+ * Signatures; otherwise the EVM key holding the `monitor` role is used (contract-enforced: can only lower).
  */
 const ERROR_ABI = [...guardedMiniLendAbi, ...kronosGuardAbi].filter((x) => x.type === "error");
 const MAX_RANGE = 2_000n;
@@ -97,6 +99,25 @@ export async function tightenOnChain(dep: Deployment, p: Protocol, reason: strin
     const cur = (await c.readContract({ address: guard, abi: kronosGuardAbi, functionName: "outflowThreshold", args: [asset] })) as bigint;
     if (cur === 0n) continue;
     const next = cur / 2n;
+    // Preferred: Chain Signatures. The registry records the tighten AND has NEAR's MPC network sign the EVM
+    // transaction for the guard's monitor (the MPC-derived address). No EVM key on this dyno is involved.
+    const cs = await chainSigReady(dep.chainId, guard, p.id);
+    if (cs.ready) {
+      const r = await chainSigTightenOutflow({ chainId: dep.chainId, guard, protocolId: p.id, asset, newThreshold: next, reason });
+      if (r.ok) {
+        await insertEvent(dep.chainId, {
+          protocolId: p.id,
+          kind: "tightened",
+          txHash: r.evmTx,
+          logIndex: -1,
+          asset,
+          amount: next.toString(),
+          data: { reason, from: cur.toString(), to: next.toString(), via: "chain-signatures", signer: r.signer, nearTx: r.nearTx, evmTx: r.evmTx },
+        });
+        continue;
+      }
+      logger.warn({ chainId: dep.chainId, err: r.error, nearTx: r.nearTx }, "Chain Signatures tighten failed; falling back to the monitor key");
+    }
     const near = await nearTighten(p.id, { LowerOutflowThreshold: { asset, new_threshold: next.toString() } }, reason);
     let evmTx: string | undefined;
     if (env.MONITOR_PRIVATE_KEY) {
@@ -115,7 +136,7 @@ export async function tightenOnChain(dep: Deployment, p: Protocol, reason: strin
       logIndex: -1,
       asset,
       amount: next.toString(),
-      data: { reason, from: cur.toString(), to: next.toString(), near, evmTx: evmTx ?? null },
+      data: { reason, from: cur.toString(), to: next.toString(), via: "monitor-key", near, evmTx: evmTx ?? null },
     });
   }
 }
@@ -210,7 +231,11 @@ interface TickState {
 async function watch(dep: Deployment, p: Protocol) {
   const c = publicClient(dep.chainId);
   const head = await c.getBlockNumber();
-  let from = BigInt(dep.lastBlock ?? Number(head) - 100) + 1n;
+  // Start ~100 blocks back on a fresh deployment (never below block 0); after a chain reset (a local node
+  // restarted, a testnet regenesis) the stored cursor is ahead of the head: rewind instead of stalling.
+  const start = (n: bigint) => (n > 100n ? n - 100n : 0n);
+  let from = dep.lastBlock === null || dep.lastBlock === undefined ? start(head) : BigInt(dep.lastBlock) + 1n;
+  if (from > head + 1n) from = start(head);
   if (from > head) return;
   const to = head - from > MAX_RANGE ? from + MAX_RANGE : head;
   const state: TickState = { intents: [], tier2: [], newSigners: [] };

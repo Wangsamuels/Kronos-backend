@@ -3178,6 +3178,140 @@
         }
       }
     },
+    "/v1/protocols/{id}/monitor": {
+      "get": {
+        "summary": "How the monitor can act on this protocol: the NEAR registry + tighten-only key, and the NEAR Chain Signatures EVM address (set it as MONITOR_ADDRESS when deploying the guard)",
+        "tags": [
+          "deployments"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "near": {
+                      "type": "object",
+                      "properties": {
+                        "network": {
+                          "type": "string"
+                        },
+                        "registry": {
+                          "type": "string"
+                        },
+                        "monitorAccount": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "functionCallKey": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "network",
+                        "registry",
+                        "monitorAccount",
+                        "functionCallKey"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "chainSignatures": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "signer": {
+                          "type": "string",
+                          "description": "NEAR MPC signer contract"
+                        },
+                        "path": {
+                          "type": "string",
+                          "description": "derivation path; predecessor = the registry contract"
+                        },
+                        "evmAddress": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "EVM address controlled by NEAR MPC for this protocol (same on every EVM chain)"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "signer",
+                        "path",
+                        "evmAddress"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "chains": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "chainId": {
+                            "type": "number"
+                          },
+                          "guardAddress": {
+                            "type": "string"
+                          },
+                          "guardMonitor": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "usesChainSignatures": {
+                            "type": "boolean",
+                            "description": "guard.monitor() is the derived address"
+                          },
+                          "derivedAddressBalanceWei": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "chainId",
+                          "guardAddress",
+                          "guardMonitor",
+                          "usesChainSignatures",
+                          "derivedAddressBalanceWei"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "near",
+                    "chainSignatures",
+                    "chains"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/protocols/{id}/admin-queue": {
       "get": {
         "summary": "Timelocked changes with ETA and tier",

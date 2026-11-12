@@ -19,3 +19,6 @@ near contract call-function as-transaction "$REGISTRY" add_monitor json-args "{\
 near account add-key "$MONITOR" grant-function-call-access --allowance '0.25 NEAR' \
   --contract-account-id "$REGISTRY" --function-names 'tighten' autogenerate-new-keypair \
   print-to-terminal network-config testnet sign-with-keychain send
+
+# Chain Signatures: the registry signs EVM tightens through NEAR's MPC signer (default v1.signer-prod.testnet).
+# The protocol's EVM monitor address is printed by: npx tsx scripts/kronos-cli.ts chainsig-address <protocol uuid>

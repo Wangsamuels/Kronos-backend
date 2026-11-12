@@ -62,6 +62,10 @@ const schema = z.object({
   NEAR_REGISTRY_CONTRACT: z.string().default("kronos.testnet"),
   NEAR_ACCOUNT_ID: z.string().optional(),
   NEAR_FUNCTION_CALL_KEY: z.string().optional(),
+  // Chain Signatures: the registry asks this MPC signer to sign EVM tightens (path kronos/<protocol id>).
+  // "auto" = used on every chain where the guard's monitor is the derived address; "off" = never.
+  NEAR_MPC_SIGNER: z.string().optional(),
+  NEAR_CHAIN_SIGNATURES: z.enum(["auto", "off"]).default("auto"),
 
   R2_ENDPOINT: z.string().optional(),
   R2_ACCESS_KEY: z.string().optional(),
@@ -115,5 +119,6 @@ export const integrations = {
   attestor: Boolean(env.ATTESTOR_PRIVATE_KEY),
   nearMonitorKey: Boolean(env.NEAR_ACCOUNT_ID && env.NEAR_FUNCTION_CALL_KEY),
   evmMonitorKey: Boolean(env.MONITOR_PRIVATE_KEY),
+  chainSignatures: Boolean(env.NEAR_ACCOUNT_ID && env.NEAR_FUNCTION_CALL_KEY) && env.NEAR_CHAIN_SIGNATURES !== "off",
   etherscan: Boolean(env.ETHERSCAN_API_KEY),
 };

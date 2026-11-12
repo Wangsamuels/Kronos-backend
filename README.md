@@ -182,16 +182,38 @@ The worker needs ≥ 1 GB RAM for forge/anvil (Standard-2X). All settings are co
 | Guard contracts | Aurora testnet (1313161555) and Base Sepolia (84532): `cd contracts && forge script script/Deploy.s.sol --rpc-url aurora_testnet --broadcast --legacy` (set `KRONOS_CONFIG=deployments/kronos.config.json` to deploy an approved package's parameters). |
 | NEAR registry | `cd near-registry && ./deploy.sh` deploys `kronos.testnet`, adds the monitor and creates its function-call key (receiver = registry, methods = `tighten`). |
 | Attestor | `ATTESTOR_PRIVATE_KEY` — must be the registry's `attestor`. |
-| Monitor | `NEAR_ACCOUNT_ID` + `NEAR_FUNCTION_CALL_KEY` (tighten-only on NEAR) and optionally `MONITOR_PRIVATE_KEY` (the guard's EVM `monitor` role, contract-enforced tighten-only). |
+| Monitor | `NEAR_ACCOUNT_ID` + `NEAR_FUNCTION_CALL_KEY` (tighten-only on NEAR). On EVM chains the guard's `monitor` is the protocol's **NEAR Chain Signatures** address (`kronos-cli chainsig-address`), so no EVM key is needed; `MONITOR_PRIVATE_KEY` remains as a fallback for guards deployed with a plain EVM monitor. |
+
+## NEAR Chain Signatures (one tighten-only NEAR key for every EVM chain)
+
+The monitor agent holds no EVM key. Each protocol gets an EVM address controlled by NEAR's MPC network
+(`v1.signer-prod.testnet`, predecessor = the registry contract, path `kronos/<protocol id>`). The guard is
+deployed with that address as its `monitor`, the only role allowed to call `tightenOutflow`, which the
+contract only lets go down.
+
+```
+anomaly ─▶ worker ──tighten(…, evm)──▶ NEAR registry ──sign(payload)──▶ MPC signer
+          (function-call key:          builds the EIP-1559 tx itself:      returns (r, s, v)
+           method `tighten` only)      to = registered guard, value 0,
+                                       data = tightenOutflow(asset, lower), bounded gas/fees
+worker ◀── signature ── registry ;  worker checks the bytes match, recovers the signer, broadcasts
+```
+
+Three independent limits: NEAR rejects any other method for the key; the registry only signs transactions
+it built itself, for outflow tightens, to the registered guard, recorded per chain and never higher than
+before; the guard reverts anything that isn't tighter (`NotTighter`). The worker uses this path wherever
+`guard.monitor()` equals the derived address and falls back to `MONITOR_PRIVATE_KEY` elsewhere
+(`NEAR_CHAIN_SIGNATURES=off` disables it). `GET /v1/protocols/{id}/monitor` shows the address, its gas
+balance and which chains use it. Demo: `npx tsx scripts/kronos-cli.ts chainsig-demo <chainId>`.
 
 ## MVP vs stretch (nothing unfinished is faked)
 
 Working now: guard contracts + attack tests, the full API and pipeline, package + PR builder, deployment
 verification, signed per-block attestations, the monitor, the NEAR registry and its tighten-only key.
 
-Stretch goals, not running in this MVP: SP1 → Groth16 proofs (`prover/`), a Chain Signatures guardian so
-the NEAR account signs Tier 0 actions on the EVM chains directly (today the NEAR `tighten` is recorded
-on-chain and the EVM side is tightened with the monitor's EVM key), NEAR Intents for cross-chain repay,
+Also working: **NEAR Chain Signatures for EVM tightens** (see below).
+
+Stretch goals, not running in this MVP: SP1 → Groth16 proofs (`prover/`), NEAR Intents for cross-chain repay,
 and analysis adapters beyond the compound-v2 shape. The attestor's TWAP is a median of on-chain samples
 from the protocol's own oracle; multi-source agreement (Chainlink + Pyth + DEX) is in `prover/attest-core`
 but not yet wired to live feeds.

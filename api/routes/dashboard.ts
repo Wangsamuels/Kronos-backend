@@ -5,10 +5,12 @@ import type { Address } from "viem";
 import { db, schema } from "../../db/client.js";
 import { conflict, notFound } from "../../lib/errors.js";
 import { verifyDeployment, type PackageManifestForVerify } from "../../lib/deployVerify.js";
-import { chainInfo } from "../../lib/chains.js";
+import { chainInfo, publicClient } from "../../lib/chains.js";
+import { env, integrations } from "../../lib/env.js";
+import { chainSigReady, derivedEvmAddress, mpcPath, mpcSigner } from "../../lib/chainsig.js";
 import { requireAuth } from "../auth.js";
 import { latestDeployment, latestRun, ownedProtocol } from "../access.js";
-import { AdminAction, CreateDeployment, Deployment, Event, Id, Overview, Page, Settings } from "../schemas.js";
+import { AdminAction, CreateDeployment, Deployment, Event, Id, MonitorInfo, Overview, Page, Settings } from "../schemas.js";
 import { toAdminAction, toDeployment, toEvent, toProtocol } from "../dto.js";
 
 const routes: FastifyPluginAsyncZod = async (app) => {
@@ -174,6 +176,51 @@ const routes: FastifyPluginAsyncZod = async (app) => {
         .limit(limit + 1);
       const page = rows.slice(0, limit);
       return { items: page.map(toEvent), nextCursor: rows.length > limit ? page[page.length - 1].ts.toISOString() : null };
+    },
+  );
+
+  app.get(
+    "/protocols/:id/monitor",
+    {
+      schema: {
+        tags: ["deployments"],
+        summary:
+          "How the monitor can act on this protocol: the NEAR registry + tighten-only key, and the NEAR Chain Signatures EVM address (set it as MONITOR_ADDRESS when deploying the guard)",
+        params: Id,
+        response: { 200: MonitorInfo },
+      },
+    },
+    async (req) => {
+      const p = await ownedProtocol(req.params.id, req.user!.id);
+      const evmAddress = integrations.chainSignatures ? await derivedEvmAddress(p.id).catch(() => null) : null;
+      const deps = await db
+        .selectDistinctOn([schema.deployments.chainId])
+        .from(schema.deployments)
+        .where(eq(schema.deployments.protocolId, p.id))
+        .orderBy(schema.deployments.chainId, desc(schema.deployments.createdAt));
+      const chains = await Promise.all(
+        deps.map(async (d) => {
+          const cs = await chainSigReady(d.chainId, d.guardAddress as Address, p.id).catch(() => ({ ready: false, address: null, monitor: null }));
+          const balance = evmAddress ? await publicClient(d.chainId).getBalance({ address: evmAddress }).catch(() => null) : null;
+          return {
+            chainId: d.chainId,
+            guardAddress: d.guardAddress,
+            guardMonitor: cs.monitor,
+            usesChainSignatures: cs.ready,
+            derivedAddressBalanceWei: balance === null ? null : balance.toString(),
+          };
+        }),
+      );
+      return {
+        near: {
+          network: env.NEAR_NETWORK,
+          registry: env.NEAR_REGISTRY_CONTRACT,
+          monitorAccount: env.NEAR_ACCOUNT_ID ?? null,
+          functionCallKey: integrations.nearMonitorKey,
+        },
+        chainSignatures: { enabled: integrations.chainSignatures, signer: mpcSigner(), path: mpcPath(p.id), evmAddress },
+        chains,
+      };
     },
   );
 
