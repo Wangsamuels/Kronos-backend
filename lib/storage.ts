@@ -5,6 +5,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env, integrations } from "./env.js";
 import { db, schema } from "../db/client.js";
 import { notFound } from "./errors.js";
+import { logger } from "./logger.js";
 
 /**
  * Object storage for source snapshots, packages and reports.
@@ -16,7 +17,7 @@ function client() {
   s3 ??= new S3Client({
     region: "auto",
     // Accept the S3 API URL exactly as Cloudflare shows it, with or without a trailing "/<bucket>".
-    endpoint: env.R2_ENDPOINT!.replace(/\/+$/, "").replace(new RegExp(`/${env.R2_BUCKET}$`), ""),
+    endpoint: r2Endpoint(env.R2_ENDPOINT!),
     // Path-style (<endpoint>/<bucket>/<key>): R2's TLS certificate doesn't cover <bucket>.<account>.r2.cloudflarestorage.com,
     // so virtual-hosted style fails with an SSL handshake error.
     forcePathStyle: true,
@@ -27,9 +28,18 @@ function client() {
 
 export async function putObject(key: string, body: Buffer | string, contentType = "application/octet-stream") {
   const buf = typeof body === "string" ? Buffer.from(body) : body;
-  if (integrations.storage === "r2") {
-    await client().send(new PutObjectCommand({ Bucket: env.R2_BUCKET, Key: key, Body: buf, ContentType: contentType }));
-  } else {
+  let toPostgres = integrations.storage !== "r2";
+  if (!toPostgres) {
+    try {
+      await client().send(new PutObjectCommand({ Bucket: env.R2_BUCKET, Key: key, Body: buf, ContentType: contentType }));
+    } catch (e) {
+      // R2 misconfigured or down: keep the pipeline running on the Postgres fallback (reads and downloads already
+      // check Postgres for keys R2 doesn't have).
+      logger.error({ err: (e as Error).message, key }, "R2 upload failed; stored the object in Postgres instead. Check R2_ENDPOINT / keys");
+      toPostgres = true;
+    }
+  }
+  if (toPostgres) {
     await db
       .insert(schema.blobs)
       .values({ key, data: buf, contentType, bytes: buf.length })
@@ -53,6 +63,23 @@ export async function getObject(key: string): Promise<Buffer> {
   const [row] = await db.select({ data: schema.blobs.data }).from(schema.blobs).where(eq(schema.blobs.key, key));
   if (!row) throw notFound(`Object ${key}`);
   return Buffer.from(row.data);
+}
+
+/**
+ * Normalizes R2_ENDPOINT to https://<account id>[.eu|.fedramp].r2.cloudflarestorage.com. Accepts the S3 API URL as
+ * the dashboard shows it (with "/<bucket>"), a "<bucket>.<account>..." host, or a bare 32-hex account id. Any other
+ * host under r2.cloudflarestorage.com makes Cloudflare abort the TLS handshake ("sslv3 alert handshake failure").
+ */
+export function r2Endpoint(raw: string): string {
+  const v = raw.trim();
+  if (/^[0-9a-f]{32}$/i.test(v)) return `https://${v.toLowerCase()}.r2.cloudflarestorage.com`;
+  const u = new URL(/^https?:\/\//.test(v) ? v : `https://${v}`);
+  const m = u.hostname.toLowerCase().match(/(?:^|\.)([0-9a-f]{32})((?:\.eu|\.fedramp)?)\.r2\.cloudflarestorage\.com$/);
+  if (m) return `https://${m[1]}${m[2]}.r2.cloudflarestorage.com`;
+  if (u.hostname.endsWith("r2.cloudflarestorage.com")) {
+    throw new Error(`R2_ENDPOINT host "${u.hostname}" has no 32-character account id; use https://<ACCOUNT_ID>.r2.cloudflarestorage.com (Cloudflare dashboard → R2 → Account details)`);
+  }
+  return `${u.protocol}//${u.host}`; // custom S3-compatible endpoint (e.g. MinIO in tests)
 }
 
 /** A URL the frontend can download from. R2: presigned (1h). Postgres: the API's own download route. */
