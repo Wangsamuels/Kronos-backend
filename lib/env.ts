@@ -66,6 +66,7 @@ const schema = z.object({
   // "auto" = used on every chain where the guard's monitor is the derived address; "off" = never.
   NEAR_MPC_SIGNER: z.string().optional(),
   NEAR_CHAIN_SIGNATURES: z.enum(["auto", "off"]).default("auto"),
+  NEAR_TIGHTEN_EVM_TGAS: z.coerce.number().int().min(50).max(300).default(100), // prepaid gas; the key allowance must cover it
 
   R2_ENDPOINT: z.string().optional(),
   R2_ACCESS_KEY: z.string().optional(),

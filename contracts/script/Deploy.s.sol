@@ -192,6 +192,26 @@ contract Deploy is Script {
         sels[14] = KronosGuard.setGuardian.selector; tiers[14] = 3;
         sels[15] = KronosGuard.setMonitor.selector; tiers[15] = 3;
         sels[16] = KronosGuard.setRegistry.selector; tiers[16] = 3;
+        _applyApprovedTiers(sels, tiers);
         t.setupTiers(target, sels, tiers);
+    }
+
+    /// The approved package is the source of truth for tiers: every `tiers[]` entry in KRONOS_CONFIG whose
+    /// selector is in the table overrides the demo default (the verifier checks the deployment against it).
+    /// The guard's own setters (indices 11+) can only be made stricter, never looser, than the defaults.
+    function _applyApprovedTiers(bytes4[] memory sels, uint8[] memory tiers) internal view {
+        string memory path = vm.envOr("KRONOS_CONFIG", string(""));
+        if (bytes(path).length == 0) return;
+        string memory json = vm.readFile(path);
+        for (uint256 i = 0; ; i++) {
+            string memory key = string.concat(".tiers[", vm.toString(i), "]");
+            if (!vm.keyExistsJson(json, key)) break;
+            bytes4 sel = bytes4(vm.parseBytes(vm.parseJsonString(json, string.concat(key, ".selector"))));
+            uint8 tier = uint8(vm.parseJsonUint(json, string.concat(key, ".tier")));
+            for (uint256 j = 0; j < sels.length; j++) {
+                if (sels[j] != sel) continue;
+                if (j < 11 || tier > tiers[j]) tiers[j] = tier;
+            }
+        }
     }
 }

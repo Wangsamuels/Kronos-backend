@@ -70,7 +70,7 @@ export async function nearTightenEvm(
       contractId: env.NEAR_REGISTRY_CONTRACT,
       methodName: "tighten",
       args: { protocol_id: protocolId, action, reason: reason.slice(0, 200), evm },
-      gas: 300_000_000_000_000n,
+      gas: BigInt(env.NEAR_TIGHTEN_EVM_TGAS) * 1_000_000_000_000n,
       attachedDeposit: 0n,
     });
     tx = res.transaction_outcome.id;
