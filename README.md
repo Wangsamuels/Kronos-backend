@@ -1,103 +1,114 @@
-# Kronos backend
+# Kronos
 
-Kronos is a security layer that plugs into an existing DeFi lending protocol. It blocks any action that
-would break the protocol's core rules, whether a user, an attacker or the protocol's own admins started it,
-and the user experience stays as fast as a normal lending call.
+Kronos is a security layer for DeFi lending protocols. It blocks any transaction that would break the
+protocol's core rules (health factor, LTV, solvency, share price, oracle sanity, collateral caps), whether a
+user, an attacker or the protocol's own admins sent it. Risky admin changes wait in a public timelock, and an
+emergency monitor can only make limits stricter, never looser.
 
-This repo is the **backend**: REST API + live log stream, the AI-assisted analysis pipeline, the guard
-contracts, the NEAR registry and the monitoring/attestation agents. It deploys to **Heroku**; the frontend
-(Next.js on Vercel) is built separately against the OpenAPI contract in [`contracts/openapi.json`](contracts/openapi.json).
+**The problem.** Most lending exploits are a single transaction that leaves the protocol in a state its own
+rules forbid: a pumped oracle lets a borrower drain the pool, a share-price inflation steals deposits, a stolen
+admin key lists fake collateral. Audits check code before launch; nothing checks each transaction's outcome
+afterwards. Kronos adds that check in the same transaction, using rules drafted by AI, tested with forge and
+approved by the protocol team.
 
-```
-users / admins ──► KronosGuard (same tx) ──► pre-checks ─► action ─► invariants ─► outflow window
-                         ▲                                                            ▲
-             attestor: one result per block                         monitor: anomaly flags tighten
-```
+Built for **NEAR HACKATHON** (1–14 Nov 2026). Status: **testnet only** (Aurora testnet, Base Sepolia, NEAR testnet).
 
-Design principles: judge state, not size · no proof generation in the user's path · no one is exempt ·
-admins change settings, never move funds · slow down abnormal activity instead of blocking it ·
-AI drafts, tests prove, humans sign.
-
-## What's in the box
-
-| Path | What |
+| | |
 |---|---|
-| `contracts/` | Foundry project. `KronosGuard` (the `guarded(kind, intent, sig)` modifier), `LendingInvariants` (template library), `GuardTimelock` (tiers 0–3, cancel-only guardians, simulate-then-check), `OutflowBreaker` (rolling 24h net-outflow window, queue-don't-fail), `AttestationRegistry`, the `MiniLend` sample (deliberately vulnerable) and `GuardedMiniLend`. 28 tests, including the three demo attacks against both versions. |
-| `api/` | Fastify + Zod + OpenAPI 3.1, JWT auth (GitHub OAuth, SIWE, NEAR NEP-413), SSE live logs. |
-| `worker/` | BullMQ stages `ingest → analyze → verify → package`, plus the always-on **monitor** and the scheduled **attestor**. |
-| `worker/agents/` | Specialist agents (mapper, schema, drafters A + B, tier classifier, red team), each with an LLM and a deterministic implementation. |
-| `worker/templates/` | The vetted invariant + attack library and the package generator. |
-| `lib/llm.ts` | The single LLM gateway: provider choice (NEAR AI Cloud TEE / OpenAI-compatible / heuristic), JSON-schema output validated by Zod, retries, a token budget per run, TEE attestation evidence. |
-| `sdk/` | `@kronos/sdk`: build, sign (EIP-712) and submit intents; exact-amount approvals only. |
-| `near-registry/` | Rust `near-sdk` contract for `kronos.testnet`: protocol registry + **tighten-only** monitor actions. |
-| `prover/` | Stretch goal: SP1 → Groth16 attestation program and its tested core logic. |
-| `db/` | Drizzle schema and migrations (Postgres). |
+| Backend (this repo) | https://github.com/Wangsamuels/Kronos-backend |
+| Frontend | https://github.com/Wangsamuels/Kronos-front |
+| Hosted app | https://kronos-five-zeta.vercel.app/ |
+| Hosted API | https://kronos-9fbcca7bfc9b.herokuapp.com (`/healthz`, `/v1/meta`, `/openapi.json`) |
+| Tracks | AI Security & Defense (`security`), Unstoppable DeFi (`defi`), Privacy & Private AI (`privacy`) |
+| Other project by the same author (rule Q-015) | **BuilderOS**: https://github.com/Wangsamuels/BuilderOS. Independent project, separate codebase, separate submission. |
 
-## Quick start (local, ~5 minutes)
+## What NEAR does in Kronos
 
-Requirements: Node 20+, [Foundry](https://getfoundry.sh), Docker (or local Postgres + Redis).
+| Layer | NEAR piece | What it does |
+|---|---|---|
+| 1. Analyze | **NEAR AI Cloud** (TEE) | Two independent models (`z-ai/glm-5.3`, `Qwen/Qwen3.6-35B-A3B-FP8`) draft the invariants inside a hardware enclave. Where they disagree, a human decides. Humans approve every rule. |
+| 2. Enforce | **Aurora** (NEAR's EVM) | The guard contracts run on Aurora testnet (and Base Sepolia), checking every guarded call. |
+| 3. Respond | **Function-call key + NEAR registry** | The monitor's NEAR key may call one method, `tighten`, on the registry contract. The registry refuses anything looser than the current value. |
+| 3. Respond | **Chain Signatures** (MPC) | The registry builds the EVM `tightenOutflow` transaction itself and NEAR's MPC signer signs it. The guard's `monitor` on each EVM chain is that MPC-derived address, so Kronos holds no EVM monitor key. |
+
+Chain Signatures currently covers outflow tightens only. Pausing and cap changes are recorded on NEAR but not
+yet signed onto EVM chains. NEAR Intents and zero-knowledge proofs are roadmap (see "MVP vs stretch").
+
+## Try it
+
+### 1. Verify the live testnet deployment (read-only, ~2 minutes)
+
+Needs Node 20+ and [Foundry](https://getfoundry.sh). Nothing is broadcast and no keys or gas are needed.
+
+```bash
+git clone https://github.com/Wangsamuels/Kronos-backend.git
+cd Kronos-backend
+npm ci
+npm run smoke -- 1313161555     # Aurora testnet
+npm run smoke -- 84532          # Base Sepolia
+```
+
+You should see: the guard's code and config hash match the approved package, the timelock owns every
+privileged role, the attestation is fresh, and then, on a local fork of the live chain: a normal deposit and
+borrow succeed, the oracle pump **reverts at `CheckOracleFailed`**, a stolen admin key cannot list fake
+collateral (direct call reverts; the timelock queues it as Tier 2 for 7 days), and the monitor can tighten the
+outflow window but a loosen reverts with **`NotTighter`**.
+
+Check that the guard's emergency monitor is the NEAR Chain Signatures address:
+
+```bash
+cast call 0xFcB08436D47B4552be70B56917CAdf423508FC26 "monitor()(address)" --rpc-url https://testnet.aurora.dev
+cast call 0x427C6b1873465fcdC80760AB509d4bDa6dd85226 "monitor()(address)" --rpc-url https://sepolia.base.org
+```
+
+Both print `0xEbBCE871786Aa2B45b437D90Ec7D1fA7853AEC9f`. The tighten transactions it has signed are visible on
+the NEAR registry's account page: https://testnet.nearblocks.io/address/kronos-registry-wang.testnet
+
+### 2. Use the hosted app
+
+1. Open https://kronos-five-zeta.vercel.app/ and sign in with GitHub, an EVM wallet or a NEAR wallet (one modal
+   for sign-in and sign-up).
+2. Choose **Protect a protocol** and use the **MiniLend** sample (or paste a public lending repo).
+3. Watch the live log: mapping, intent schemas, drafters A and B on NEAR AI, tier classification, red team,
+   forge verification. You should see **6/6 attacks blocked, 4/4 normal flows pass** for MiniLend.
+4. Review: decide any rule the two models disagreed on, approve, and download the package (contracts, config,
+   tests, deploy script, SDK snippet, `INTEGRATION.md`).
+
+The analysis worker is a shared testnet instance; a run takes a few minutes.
+
+### 3. Run the whole system locally (~5 minutes)
+
+Needs Node 20+, Foundry and Docker. No third-party keys: without them the backend runs in labelled local modes
+(heuristic agents instead of an LLM, local disk instead of R2, zip download instead of a GitHub PR, dry-run
+NEAR calls). `GET /v1/meta` shows which mode each integration is in.
 
 ```bash
 npm ci
 cp .env.example .env              # works as-is for local runs
 docker compose up -d              # postgres, redis, anvil
 npm run migrate
-npm run dev:api                   # http://localhost:8080  (docs: /openapi.json, health: /healthz)
-npm run dev:worker                # in a second terminal
-npm run demo                      # in a third terminal: the full end-to-end demo
+npm run dev:api                   # terminal 1: http://localhost:8080 (/healthz, /openapi.json)
+npm run dev:worker                # terminal 2
+npm run demo                      # terminal 3: end-to-end demo, ends with 30/30 checks passed
 ```
 
-`npm run demo` does exactly what the 2-minute video shows, against the local chain:
+`npm run demo` does, against the local chain:
 
-1. signs in, submits the MiniLend sample and streams the live analysis (mapping, intents, drafters A/B,
-   tiers, red team, forge verification: **6/6 attacks blocked, 4/4 normal flows pass**);
+1. signs in, submits the MiniLend sample and streams the analysis; forge verification reports 6/6 attacks
+   blocked, 4/4 normal flows pass;
 2. decides the invariant the drafters disagreed on, approves, builds the package;
-3. deploys the guarded protocol with the approved parameters and registers it — on-chain verification
-   checks the config hash, that every entry point reverts without a valid intent, and that the timelock
-   owns every privileged role (30/30 checks) — the protocol goes **live** and the attestor starts posting;
-4. runs the oracle pump: the borrow **reverts at `CheckOracleFailed`** and the monitor records it as blocked;
-5. a stolen admin key lists a fake collateral: direct call reverts, the timelock queues it for **7 days**,
-   the guardian cancels;
-6. the monitor's tighten-only key halves the outflow window; a loosen call with the same key is rejected.
+3. deploys the guarded protocol with the approved parameters and registers it; on-chain verification checks
+   the config hash, that every entry point reverts without a valid intent, and that the timelock owns every
+   privileged role (30/30 checks); the protocol goes live and the attestor starts posting;
+4. runs the oracle pump: the borrow reverts at `CheckOracleFailed` and the monitor records it as blocked;
+5. a stolen admin key lists fake collateral: the direct call reverts, the timelock queues it for 7 days, the
+   guardian cancels;
+6. the monitor's tighten-only key halves the outflow window; a loosen with the same key is rejected.
 
-No third-party keys are needed: without them the backend runs in clearly labelled local modes
-(`GET /v1/meta` shows which): heuristic agents instead of an LLM, local disk instead of R2, zip download
-instead of a GitHub PR, dry-run NEAR calls.
+To use NEAR AI Cloud locally, set `LLM_PROVIDER=near-ai` and `NEAR_AI_API_KEY` in `.env`, then
+`npm run kronos -- llm-check` confirms both models answer.
 
-## Live testnet deployments
-
-The MiniLend demo is deployed with the parameters of the approved Kronos package (config hash
-`0x3be44e857e450e71827ee2ab7eab7f1f3b4dda31c978b67cd79cba250722ad24`) on **Aurora testnet (1313161555)**
-and **Base Sepolia (84532)**. The same deployer and nonce sequence gave identical addresses on both chains.
-Machine-readable copies: [`contracts/deployments/1313161555.json`](contracts/deployments/1313161555.json),
-[`contracts/deployments/84532.json`](contracts/deployments/84532.json).
-
-| Contract | Address | Aurora testnet | Base Sepolia |
-|---|---|---|---|
-| GuardedMiniLend (guarded protocol) | `0x2634d68199e59afFA02399f1e239d660F75E2e8c` | [explorer](https://explorer.testnet.aurora.dev/address/0x2634d68199e59afFA02399f1e239d660F75E2e8c) | [basescan](https://sepolia.basescan.org/address/0x2634d68199e59afFA02399f1e239d660F75E2e8c) |
-| GuardTimelock | `0xD35A5E3eB8890e8820e5EB03614Be6fb02a0d405` | [explorer](https://explorer.testnet.aurora.dev/address/0xD35A5E3eB8890e8820e5EB03614Be6fb02a0d405) | [basescan](https://sepolia.basescan.org/address/0xD35A5E3eB8890e8820e5EB03614Be6fb02a0d405) |
-| AttestationRegistry | `0x28d4dBdF3fAE4feADea564098797Cc1685aF1e0b` | [explorer](https://explorer.testnet.aurora.dev/address/0x28d4dBdF3fAE4feADea564098797Cc1685aF1e0b) | [basescan](https://sepolia.basescan.org/address/0x28d4dBdF3fAE4feADea564098797Cc1685aF1e0b) |
-| MiniLend (unguarded, for side-by-side replays) | `0x3860c6A53F5b152C03E59E1b11b8B2F7d04ED2b8` | [explorer](https://explorer.testnet.aurora.dev/address/0x3860c6A53F5b152C03E59E1b11b8B2F7d04ED2b8) | [basescan](https://sepolia.basescan.org/address/0x3860c6A53F5b152C03E59E1b11b8B2F7d04ED2b8) |
-| kUSDC (mock) | `0x8326F1Ef7456ed27FF6d7BA6635231f873cf1a8E` | [explorer](https://explorer.testnet.aurora.dev/address/0x8326F1Ef7456ed27FF6d7BA6635231f873cf1a8E) | [basescan](https://sepolia.basescan.org/address/0x8326F1Ef7456ed27FF6d7BA6635231f873cf1a8E) |
-| kWETH (mock) | `0x2355Bd309F5435AbDA697d1E2c737422a28a988B` | [explorer](https://explorer.testnet.aurora.dev/address/0x2355Bd309F5435AbDA697d1E2c737422a28a988B) | [basescan](https://sepolia.basescan.org/address/0x2355Bd309F5435AbDA697d1E2c737422a28a988B) |
-| THIN (thin-liquidity collateral) | `0xdCCECCD2955211AE82aB9a21A496d3da6320C7e2` | [explorer](https://explorer.testnet.aurora.dev/address/0xdCCECCD2955211AE82aB9a21A496d3da6320C7e2) | [basescan](https://sepolia.basescan.org/address/0xdCCECCD2955211AE82aB9a21A496d3da6320C7e2) |
-| THIN/kUSDC pool (spot oracle) | `0x6638d5522A96713461f3B00F725d6d4c0325B96C` | [explorer](https://explorer.testnet.aurora.dev/address/0x6638d5522A96713461f3B00F725d6d4c0325B96C) | [basescan](https://sepolia.basescan.org/address/0x6638d5522A96713461f3B00F725d6d4c0325B96C) |
-| Fixed price oracle (kWETH) | `0xeA551c0ca8DaAAb37ddeB974C1F37eE4974285B1` | [explorer](https://explorer.testnet.aurora.dev/address/0xeA551c0ca8DaAAb37ddeB974C1F37eE4974285B1) | [basescan](https://sepolia.basescan.org/address/0xeA551c0ca8DaAAb37ddeB974C1F37eE4974285B1) |
-
-Check a deployment yourself (read-only checks on the live chain, then the attacks on a local fork of it;
-nothing is broadcast and no gas is spent; needs Foundry):
-
-```bash
-npm run smoke -- 1313161555
-npm run smoke -- 84532
-```
-
-It confirms the code and config hash, timelock ownership and attestation freshness, then on the fork: a
-normal deposit + borrow succeeds, the oracle pump reverts at `CheckOracleFailed`, a stolen admin key can't
-list a fake collateral (direct call reverts; the timelock queues it as Tier 2 for 7 days), and the monitor
-key can tighten but not loosen the outflow window.
-
-## Tests
+### 4. Tests
 
 ```bash
 npm run test:contracts            # forge: 28 tests (attacks vs unguarded + guarded, timelock, breaker, gas)
@@ -107,117 +118,143 @@ cd near-registry && cargo test    # NEAR registry: tighten-only rules
 cd prover/attest-core && cargo test
 ```
 
-## How the analysis works (template-first)
+## Live testnet deployments
 
-1. **Ingest** (deterministic): clone the repo (GitHub App token if installed), pull verified source for any
-   addresses from the explorer, snapshot to R2, compile with forge to a solc AST, run Slither if present,
-   classify. Non-lending stops with "Bridges and other types coming soon".
-2. **Mapper agent**: every entry point labelled `user` / `privileged` with its kind; locates key state
-   (health getter, exchange rate, oracle, caps, listings). Hard rule: anything the AST shows as
-   access-controlled is privileged.
-3. **Schema agent**: one EIP-712 intent type per user action (`BorrowIntent{asset, amount, maxLtvBps,
-   minHealthBps, account, recipient, deadline, nonce}`).
-4. **Invariant drafters A and B** fill the vetted templates independently; the merge keeps what both agree
-   on and flags disagreements for human review (defaulting to the stricter value).
-5. **Tier classifier**, with hard rules: an oracle change is always ≥ Tier 2, upgrades and signer changes
-   are Tier 3, only explicit tighten functions may be Tier 0.
-6. **Red team** picks attacks from the library; the **verifier** generates `GuardConfig.<Name>.sol` +
-   `Guarded<Name>.sol`, compiles them and runs the attack library and normal traffic with forge (plus a
-   fork replay of recent real transactions and history-based outflow thresholds when the protocol is
-   deployed). An exploit that gets through sends the gap back to the drafters, up to 2 rounds.
-7. **Human review** in the frontend; approval builds the package (contracts, config, tests, deploy script,
-   SDK snippet, `INTEGRATION.md`, test report), uploads it and can open the integration PR.
+Protocol `56d0ceaa-d715-441f-b654-93ccacb04477`, package `v1-c57e82`, config hash
+`0xc57e8224b9db10a85030e05e6c3dc6110850c64ece0632511feb498683e0dc0d`. Both deployments pass 30/30 on-chain
+checks. Machine-readable copies: [`contracts/deployments/1313161555.json`](contracts/deployments/1313161555.json),
+[`contracts/deployments/84532.json`](contracts/deployments/84532.json).
 
-Agents agreeing with each other proves nothing; the compiler and the fork tests decide what is true.
+| Contract | Aurora testnet (1313161555) | Base Sepolia (84532) |
+|---|---|---|
+| GuardedMiniLend (guard) | [`0xFcB08436D47B4552be70B56917CAdf423508FC26`](https://explorer.testnet.aurora.dev/address/0xFcB08436D47B4552be70B56917CAdf423508FC26) | [`0x427C6b1873465fcdC80760AB509d4bDa6dd85226`](https://sepolia.basescan.org/address/0x427C6b1873465fcdC80760AB509d4bDa6dd85226) |
+| GuardTimelock | [`0xB8c6AD7c264043d6e3fa6b02518b95B72FCAB68A`](https://explorer.testnet.aurora.dev/address/0xB8c6AD7c264043d6e3fa6b02518b95B72FCAB68A) | [`0x30cF058605d1709F5Ee00b36749CbFCf35E17986`](https://sepolia.basescan.org/address/0x30cF058605d1709F5Ee00b36749CbFCf35E17986) |
+| AttestationRegistry | [`0x427C6b1873465fcdC80760AB509d4bDa6dd85226`](https://explorer.testnet.aurora.dev/address/0x427C6b1873465fcdC80760AB509d4bDa6dd85226) | [`0xB8c6AD7c264043d6e3fa6b02518b95B72FCAB68A`](https://sepolia.basescan.org/address/0xB8c6AD7c264043d6e3fa6b02518b95B72FCAB68A) |
+| Guard monitor (Chain Signatures address) | `0xEbBCE871786Aa2B45b437D90Ec7D1fA7853AEC9f` | `0xEbBCE871786Aa2B45b437D90Ec7D1fA7853AEC9f` |
+| MiniLend (unguarded, for side-by-side replays) | `0xad8d6120bda8247bf65c21b64ef137d03d2c7353` | `0xFcB08436D47B4552be70B56917CAdf423508FC26` |
+| kUSDC (mock) | `0x3afa5F034Aa297a019C61F03Bb62CDE0D5a9fbeb` | `0x6E3DbDE590D3a92b87842aD96266e363Ae2213d2` |
+| kWETH (mock) | `0x3ee5a255de8958ec1008d242abf18a04ab47a436` | `0x3afa5F034Aa297a019C61F03Bb62CDE0D5a9fbeb` |
+| THIN (thin-liquidity collateral) | `0x30d40C7898c4ba730d39cf459056fbc9D40Af979` | `0x3ee5A255dE8958eC1008d242ABf18a04Ab47A436` |
+| THIN/kUSDC pool (spot oracle) | `0x5b6034d45bb4f8e9c393ff20d772ab1e7eb39303` | `0xaA73F07C832beF1a52ceea024Eb4FDF3761D2084` |
+| Fixed price oracle (kWETH) | `0x201103aee38fe9144a078ac5f013382da5078348` | `0x30d40C7898c4ba730d39cf459056fbc9D40Af979` |
 
-**Adapters.** The generator currently ships one vetted adapter, `compound-v2-style` (thin external
-wrappers over internal logic, per-asset oracle, single collateral per account — the MiniLend shape). For
-other protocols the pipeline still maps, drafts, tiers and packages the guard library + config + intent
-schemas, and says plainly that GuardConfig wiring needs a manual or LLM-drafted adapter step.
+The same address appears in different roles on the two chains because of deployer nonces; it is not an error.
 
-## Deploying to Heroku
-
-The full runbook (Heroku resources, every config var, EVM + NEAR contract deployment, GitHub App,
-Vercel proxy) is in **[DEPLOY.md](DEPLOY.md)**. The short version:
-
-```bash
-heroku create kronos-api --stack container
-heroku addons:create heroku-postgresql:essential-0
-heroku addons:create heroku-redis:mini
-heroku config:set JWT_SECRET=$(openssl rand -hex 32) NODE_ENV=production \
-  CORS_ORIGINS=https://<project>.vercel.app FRONTEND_URL=https://<project>.vercel.app \
-  PUBLIC_API_URL=https://kronos-api.herokuapp.com
-git push heroku main               # heroku.yml: one Docker image (Node 20 + Foundry + Slither)
-heroku ps:scale web=1:standard-1x worker=1:standard-2x
-```
-
-The release phase runs `node dist/db/migrate.js`. `GET /healthz` reports DB, Redis and queue status.
-The worker needs ≥ 1 GB RAM for forge/anvil (Standard-2X). All settings are config vars — see
-`.env.example`.
-
-### Connecting the frontend
-
-1. The frontend generates its typed client from `contracts/openapi.json` (`openapi-typescript`);
-   regenerate with `npm run openapi` after API changes.
-2. Set `NEXT_PUBLIC_API_URL=https://kronos-api.herokuapp.com` on Vercel, and `CORS_ORIGINS` +
-   `FRONTEND_URL` here.
-3. Auth: one modal for sign-in and sign-up (the first sign-in creates the account; responses carry
-   `isNewUser`). `GET /v1/auth/providers` lists the options and the exact SIWE domain / NEAR recipient to
-   sign. The access JWT comes back in the body (keep it in memory); the refresh token is an httpOnly cookie
-   (`POST /v1/auth/refresh` on app load restores the session). GitHub: navigate to
-   `/v1/auth/github?returnTo=/your/path`; it comes back to
-   `FRONTEND_URL/auth/callback#access_token=…&new_user=0|1&return_to=/your/path` (or `#error=…`).
-   Prefer proxying the API through Vercel so the cookie is first-party (see DEPLOY.md §6).
-4. SSE: `GET /v1/analyses/:id/stream?token=…` (EventSource can't send headers). Events: `stage`, `log`,
-   `entrypoint`, `invariant`, `done`, `error`, each with an `id`; reconnects resume via `Last-Event-ID` or
-   `?lastEventId=`. A heartbeat goes out every 15 s (Heroku drops idle connections after 55 s). After
-   approval, reopen the stream with the last id to follow packaging.
-5. Every route is under `/v1`. Errors are always `{error: {code, message, details?}}`; lists paginate with
-   `?cursor=&limit=`.
-
-## Chains and keys
-
-| What | Where |
+| NEAR (testnet) | |
 |---|---|
-| Guard contracts | Aurora testnet (1313161555) and Base Sepolia (84532): `cd contracts && forge script script/Deploy.s.sol --rpc-url aurora_testnet --broadcast --legacy` (set `KRONOS_CONFIG=deployments/kronos.config.json` to deploy an approved package's parameters). |
-| NEAR registry | `cd near-registry && ./deploy.sh` deploys `kronos.testnet`, adds the monitor and creates its function-call key (receiver = registry, methods = `tighten`). |
-| Attestor | `ATTESTOR_PRIVATE_KEY` — must be the registry's `attestor`. |
-| Monitor | `NEAR_ACCOUNT_ID` + `NEAR_FUNCTION_CALL_KEY` (tighten-only on NEAR). On EVM chains the guard's `monitor` is the protocol's **NEAR Chain Signatures** address (`kronos-cli chainsig-address`), so no EVM key is needed; `MONITOR_PRIVATE_KEY` remains as a fallback for guards deployed with a plain EVM monitor. |
+| Registry contract (also the protocol's owner on NEAR) | [`kronos-registry-wang.testnet`](https://testnet.nearblocks.io/address/kronos-registry-wang.testnet) |
+| Monitor account (function-call key limited to `tighten`) | [`kronos-monitor-wang.testnet`](https://testnet.nearblocks.io/address/kronos-monitor-wang.testnet) |
+| MPC signer / derivation path | `v1.signer-prod.testnet` / `kronos/56d0ceaa-d715-441f-b654-93ccacb04477` |
 
-## NEAR Chain Signatures (one tighten-only NEAR key for every EVM chain)
+A Chain Signatures tighten has executed on both chains (outflow threshold 200,000 → 100,000 kUSDC).
+Earlier deployments (protocol `758e2853-…`, guards `0x2634…2e8c`) predate Chain Signatures and are superseded.
 
-The monitor agent holds no EVM key. Each protocol gets an EVM address controlled by NEAR's MPC network
-(`v1.signer-prod.testnet`, predecessor = the registry contract, path `kronos/<protocol id>`). The guard is
-deployed with that address as its `monitor`, the only role allowed to call `tightenOutflow`, which the
-contract only lets go down.
+## How it works
+
+### The guard
+
+`KronosGuard` is one modifier, `guarded(kind, intent, sig)`, with two entry paths: users with a signed EIP-712
+intent, and admins through the timelock. Every call passes intent check → pre-checks → the action →
+post-checks (health, LTV, solvency, share price, oracle vs attested TWAP, collateral caps with probation) →
+outflow window. `OutflowBreaker` queues (rather than fails) withdrawals that push 24h net outflow over the
+threshold.
+
+`GuardTimelock` routes admin calls by tier: Tier 0 tighten is instant, Tier 1 waits 48h, Tier 2 (new
+collateral, oracle changes) 7 days, Tier 3 (upgrades, signer changes) 14 days plus co-sign. Guardians can
+cancel queued actions, never execute them.
+
+### The analysis pipeline (template-first)
+
+1. **Ingest**: clone the repo, pull verified source for any addresses, compile with forge, run Slither if
+   present, classify. Non-lending protocols stop with "coming soon".
+2. **Mapper**: labels every entry point `user` or `privileged`; anything the AST shows as access-controlled is
+   privileged.
+3. **Schema**: one EIP-712 intent type per user action.
+4. **Drafters A and B** (two different models) fill vetted invariant templates independently; values are
+   clamped to safe bounds; disagreements go to human review, defaulting to the stricter value.
+5. **Tier classifier** with hard rules (oracle change ≥ Tier 2, upgrades Tier 3, only explicit tighten
+   functions Tier 0).
+6. **Red team + verifier**: generates `GuardConfig` + the guarded contract, compiles them and runs the attack
+   library and normal traffic with forge. An exploit that gets through goes back to the drafters (up to 2 rounds).
+7. **Human review** and approval build the package and can open an integration PR.
+
+Agents agreeing with each other proves nothing; the compiler and the fork tests decide.
+
+### NEAR Chain Signatures path
 
 ```
 anomaly ─▶ worker ──tighten(…, evm)──▶ NEAR registry ──sign(payload)──▶ MPC signer
           (function-call key:          builds the EIP-1559 tx itself:      returns (r, s, v)
            method `tighten` only)      to = registered guard, value 0,
-                                       data = tightenOutflow(asset, lower), bounded gas/fees
-worker ◀── signature ── registry ;  worker checks the bytes match, recovers the signer, broadcasts
+                                       data = tightenOutflow(asset, lower)
+worker ◀── signature ── registry ;  worker checks the bytes, recovers the signer, broadcasts
 ```
 
-Three independent limits: NEAR rejects any other method for the key; the registry only signs transactions
-it built itself, for outflow tightens, to the registered guard, recorded per chain and never higher than
-before; the guard reverts anything that isn't tighter (`NotTighter`). The worker uses this path wherever
-`guard.monitor()` equals the derived address and falls back to `MONITOR_PRIVATE_KEY` elsewhere
-(`NEAR_CHAIN_SIGNATURES=off` disables it). `GET /v1/protocols/{id}/monitor` shows the address, its gas
-balance and which chains use it. Demo: `npx tsx scripts/kronos-cli.ts chainsig-demo <chainId>`.
+Three independent limits: NEAR rejects any other method for the key; the registry only signs transactions it
+built, for outflow tightens, to the registered guard, never higher than before; the guard reverts anything not
+stricter (`NotTighter`). Where a guard's `monitor()` is not the derived address, the worker falls back to an
+EVM monitor key (`MONITOR_PRIVATE_KEY`).
 
-## MVP vs stretch (nothing unfinished is faked)
+Owner-only demo (needs the monitor's NEAR key):
+`npm run kronos -- chainsig-demo 1313161555` prints the NEAR transaction and the EVM transaction.
 
-Working now: guard contracts + attack tests, the full API and pipeline, package + PR builder, deployment
-verification, signed per-block attestations, the monitor, the NEAR registry and its tighten-only key.
+## Repository layout
 
-Also working: **NEAR Chain Signatures for EVM tightens** (see below).
+| Path | What |
+|---|---|
+| `contracts/` | Foundry project: `KronosGuard`, `LendingInvariants`, `GuardTimelock`, `OutflowBreaker`, `AttestationRegistry`, the deliberately vulnerable `MiniLend` sample and `GuardedMiniLend`. 28 tests. |
+| `api/` | Fastify 5 + Zod + OpenAPI 3.1 (`/openapi.json`); JWT auth via GitHub, SIWE and NEAR NEP-413; SSE live logs. |
+| `worker/` | BullMQ stages `ingest → analyze → verify → review → package`, plus the monitor and the attestor. |
+| `worker/agents/`, `lib/llm.ts` | AI agents and the single LLM gateway (NEAR AI Cloud / OpenAI-compatible / heuristic fallback). |
+| `near-registry/` | Rust `near-sdk` registry contract: protocol registry + tighten-only actions + Chain Signatures signing. |
+| `sdk/` | `@kronos/sdk`: build, sign and submit intents. |
+| `prover/` | Roadmap: SP1 attestation program skeleton and its tested core logic. Not running. |
+| `scripts/` | `demo`, `smoke`, and the `kronos` CLI (`register`, `near-demo`, `llm-check`, `chainsig-address`, `chainsig-demo`, `transfer`). |
+| `db/` | Drizzle schema and migrations (Postgres). |
 
-Stretch goals, not running in this MVP: SP1 → Groth16 proofs (`prover/`), NEAR Intents for cross-chain repay,
-and analysis adapters beyond the compound-v2 shape. The attestor's TWAP is a median of on-chain samples
-from the protocol's own oracle; multi-source agreement (Chainlink + Pyth + DEX) is in `prover/attest-core`
-but not yet wired to live feeds.
+Deployment runbook (Heroku, config vars, EVM and NEAR contract deployment): [DEPLOY.md](DEPLOY.md).
 
-What Kronos can't stop: users signing a malicious intent (phishing), stolen exchange keys, bugs in a chain's
-own software, bugs in these invariants, and immutable protocols that can't host the hook (there, only users
-going through the intent gateway are protected).
+## Hackathon window and pre-existing code (rules Q-001 to Q-004)
+
+All code in this repository and in [Kronos-front](https://github.com/Wangsamuels/Kronos-front) was written
+during the hackathon window (work counts from 19 Oct 2026). The first commit in this repo is dated
+10 Nov 2026; there is no pre-hackathon baseline and no earlier product live on another chain. The full
+history is the diff: https://github.com/Wangsamuels/Kronos-backend/commits/main. The submitted state is tagged
+`hackathon-submission`.
+
+Design notes written before coding used the working name "Intent ZK"; no code from that period exists.
+
+## Libraries, templates and AI tools (rule Q-005)
+
+- **AI coding assistance:** Claude (Anthropic) was used to write and review large parts of the backend,
+  contracts, NEAR registry and this README. The frontend was built with Claude Fable 5.2. All of it was
+  reviewed and run by the author.
+- **AI at runtime:** NEAR AI Cloud models `z-ai/glm-5.3` and `Qwen/Qwen3.6-35B-A3B-FP8`.
+- **Backend:** Node 22, TypeScript, Fastify, Zod, Drizzle ORM, pg, BullMQ, ioredis, viem, near-api-js, jose,
+  @noble/curves, @noble/hashes, Octokit, archiver, AWS SDK (S3 client for Cloudflare R2), pino, vitest, tsx.
+- **Contracts:** Solidity, Foundry, forge-std; Slither (optional, for analysis).
+- **NEAR:** near-sdk 5.30, cargo-near; NEAR AI Cloud; NEAR MPC signer `v1.signer-prod.testnet`.
+- **Prover (roadmap):** SP1 (`sp1-zkvm`).
+- **Frontend** (separate repo): Next.js, React, Tailwind, Radix UI, wagmi, viem, WalletConnect,
+  @near-wallet-selector, TanStack Query, openapi-fetch, openapi-typescript.
+- **Hosting:** Heroku (API + worker), Vercel (frontend), Cloudflare R2 (packages).
+- No third-party templates or boilerplate were used beyond the libraries' standard project scaffolds.
+
+## MVP vs stretch (nothing unfinished is claimed as working)
+
+Working now: guard contracts and attack tests, the API and analysis pipeline on NEAR AI Cloud, package and PR
+builder, deployment verification on Aurora testnet and Base Sepolia, signed attestations, the monitor, the NEAR
+registry with its tighten-only key, and NEAR Chain Signatures for outflow tightens.
+
+Not running yet: SP1 → Groth16 proofs (`prover/`; attestations today are signed, not proven), NEAR Intents
+(e.g. cross-chain settlement of queued withdrawals), Chain Signatures for pause and cap actions, analysis
+adapters beyond the compound-v2 shape, and multi-source price agreement (Chainlink + Pyth + DEX) wired to live
+feeds. Protocol types other than lending (bridges, DEXs, perps, vaults) are on a waitlist.
+
+What Kronos can't stop: users signing a malicious intent (phishing), stolen user or exchange keys, bugs in a
+chain's own software, bugs in the invariants themselves, and immutable protocols that can't host the modifier.
+Audits and fork tests are still needed.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
