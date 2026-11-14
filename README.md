@@ -19,7 +19,7 @@ Built for **NEAR HACKATHON** (1–14 Nov 2026). Status: **testnet only** (Aurora
 | Frontend | https://github.com/Wangsamuels/Kronos-front |
 | Hosted app | https://kronos-five-zeta.vercel.app/ |
 | Hosted API | https://kronos-9fbcca7bfc9b.herokuapp.com (`/healthz`, `/v1/meta`, `/openapi.json`) |
-| Tracks | AI Security & Defense (`security`), Unstoppable DeFi (`defi`), Privacy & Private AI (`privacy`) |
+| Tracks | AI Security & Defense (`security`), Unstoppable DeFi (`defi`), Privacy & Private AI (`privacy`), Open Innovation (`open`) |
 | Other project by the same author (rule Q-015) | **BuilderOS**: https://github.com/Wangsamuels/BuilderOS. Independent project, separate codebase, separate submission. |
 
 ## What NEAR does in Kronos
